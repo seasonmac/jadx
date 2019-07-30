@@ -54,24 +54,25 @@ public class DepthRegionTraversal {
 		} else if (container instanceof IRegion) {
 			IRegion region = (IRegion) container;
 			if (visitor.enterRegion(mth, region)) {
-				for (IContainer subCont : region.getSubBlocks()) {
-					traverseInternal(mth, visitor, subCont);
-				}
+				region.getSubBlocks().forEach(subCont -> traverseInternal(mth, visitor, subCont));
 			}
 			visitor.leaveRegion(mth, region);
 		}
 	}
 
-	private static boolean traverseIterativeStepInternal(MethodNode mth, IRegionIterativeVisitor visitor,
-			IContainer container) {
+	private static boolean traverseIterativeStepInternal(MethodNode mth, IRegionIterativeVisitor visitor, IContainer container) {
 		if (container instanceof IRegion) {
 			IRegion region = (IRegion) container;
 			if (visitor.visitRegion(mth, region)) {
 				return true;
 			}
 			for (IContainer subCont : region.getSubBlocks()) {
-				if (traverseIterativeStepInternal(mth, visitor, subCont)) {
-					return true;
+				try {
+					if (traverseIterativeStepInternal(mth, visitor, subCont)) {
+						return true;
+					}
+				} catch (StackOverflowError overflow) {
+					throw new JadxOverflowException("Region traversal failed: Recursive call in traverseIterativeStepInternal method");
 				}
 			}
 		}

@@ -1,153 +1,221 @@
 package jadx.core.utils.files;
 
-import jadx.core.utils.AsmUtils;
-import jadx.core.utils.exceptions.DecodeException;
-import jadx.core.utils.exceptions.JadxException;
-import jadx.core.utils.exceptions.JadxRuntimeException;
-
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-import org.apache.commons.io.IOUtils;
+import org.jetbrains.annotations.Nullable;
+import org.jf.smali.Smali;
+import org.jf.smali.SmaliOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.android.dex.Dex;
+import com.android.dex.DexException;
 
-import static jadx.core.utils.files.FileUtils.close;
+import jadx.core.utils.AsmUtils;
+import jadx.core.utils.exceptions.DecodeException;
+import jadx.core.utils.exceptions.JadxException;
+import jadx.core.utils.exceptions.JadxRuntimeException;
+
+import static jadx.core.utils.files.FileUtils.isApkFile;
+import static jadx.core.utils.files.FileUtils.isZipDexFile;
 
 public class InputFile {
 	private static final Logger LOG = LoggerFactory.getLogger(InputFile.class);
 
 	private final File file;
-	private final List<DexFile> dexFiles = new ArrayList<DexFile>();
+	private final List<DexFile> dexFiles = new ArrayList<>();
 
-	public static void addFilesFrom(File file, List<InputFile> list) throws IOException, DecodeException {
+	public static void addFilesFrom(File file, List<InputFile> list, boolean skipSources) throws IOException, DecodeException {
 		InputFile inputFile = new InputFile(file);
-		inputFile.searchDexFiles();
+		inputFile.searchDexFiles(skipSources);
 		list.add(inputFile);
 	}
 
-	private InputFile(File file) throws IOException, DecodeException {
+	private InputFile(File file) throws IOException {
 		if (!file.exists()) {
 			throw new IOException("File not found: " + file.getAbsolutePath());
 		}
 		this.file = file;
 	}
 
-	private void searchDexFiles() throws IOException, DecodeException {
+	private void searchDexFiles(boolean skipSources) throws IOException, DecodeException {
 		String fileName = file.getName();
+
 		if (fileName.endsWith(".dex")) {
-			addDexFile(new Dex(file));
+			addDexFile(fileName, file.toPath());
+			return;
+		}
+		if (fileName.endsWith(".smali")) {
+			Path output = FileUtils.createTempFile(".dex");
+			SmaliOptions options = new SmaliOptions();
+			options.outputDexFile = output.toAbsolutePath().toString();
+			Smali.assemble(options, file.getAbsolutePath());
+			addDexFile(fileName, output);
 			return;
 		}
 		if (fileName.endsWith(".class")) {
-			addDexFile(loadFromClassFile(file));
+			for (Path path : loadFromClassFile(file)) {
+				addDexFile(fileName, path);
+			}
 			return;
 		}
-		if (fileName.endsWith(".apk") || fileName.endsWith(".zip")) {
+		if (isApkFile(file) || isZipDexFile(file)) {
 			loadFromZip(".dex");
 			return;
 		}
-		if (fileName.endsWith(".jar")) {
-			// check if jar contains '.dex' files
+		if (fileName.endsWith(".jar") || fileName.endsWith(".aar")) {
+			// check if jar/aar contains '.dex' files
 			if (loadFromZip(".dex")) {
 				return;
 			}
-			addDexFile(loadFromJar(file));
+			if (fileName.endsWith(".jar")) {
+				for (Path path : loadFromJar(file.toPath())) {
+					addDexFile(fileName, path);
+				}
+				return;
+			}
+			if (fileName.endsWith(".aar")) {
+				loadFromZip(".jar");
+				return;
+			}
 			return;
 		}
-		if (fileName.endsWith(".aar")) {
-			loadFromZip(".jar");
+		if (skipSources) {
 			return;
 		}
-		throw new DecodeException("Unsupported input file format: " + file);
-	}
-
-	private void addDexFile(Dex dexBuf) throws IOException {
-		addDexFile("", dexBuf);
-	}
-
-	private void addDexFile(String fileName, Dex dexBuf) throws IOException {
-		dexFiles.add(new DexFile(this, fileName, dexBuf));
+		LOG.warn("No dex files found in {}", file);
 	}
 
 	private boolean loadFromZip(String ext) throws IOException, DecodeException {
-		ZipFile zf = new ZipFile(file);
 		int index = 0;
-		while (true) {
-			String entryName = "classes" + (index == 0 ? "" : index) + ext;
-			ZipEntry entry = zf.getEntry(entryName);
-			if (entry == null) {
-				break;
-			}
-			InputStream inputStream = zf.getInputStream(entry);
-			try {
-				if (ext.equals(".dex")) {
-					addDexFile(entryName, new Dex(inputStream));
-				} else if (ext.equals(".jar")) {
-					File jarFile = FileUtils.createTempFile(entryName);
-					FileOutputStream fos = new FileOutputStream(jarFile);
-					try {
-						IOUtils.copy(inputStream, fos);
-					} finally {
-						close(fos);
-					}
-					addDexFile(entryName, loadFromJar(jarFile));
-				} else {
-					throw new JadxRuntimeException("Unexpected extension in zip: " + ext);
+		try (ZipFile zf = new ZipFile(file)) {
+			// Input file could be .apk or .zip files
+			// we should consider the input file could contain only one single dex, multi-dex,
+			// or instantRun support dex for Android .apk files
+			String instantRunDexSuffix = "classes" + ext;
+			for (Enumeration<? extends ZipEntry> e = zf.entries(); e.hasMoreElements();) {
+				ZipEntry entry = e.nextElement();
+				if (!ZipSecurity.isValidZipEntry(entry)) {
+					continue;
 				}
-			} finally {
-				close(inputStream);
-			}
-			index++;
-			if (index == 1) {
-				index = 2;
+
+				String entryName = entry.getName();
+				try (InputStream inputStream = zf.getInputStream(entry)) {
+					if ((entryName.startsWith("classes") && entryName.endsWith(ext))
+							|| entryName.endsWith(instantRunDexSuffix)) {
+						switch (ext) {
+							case ".dex":
+								Path path = copyToTmpDex(entryName, inputStream);
+								if (addDexFile(entryName, path)) {
+									index++;
+								}
+								break;
+
+							case ".jar":
+								index++;
+								Path jarFile = FileUtils.createTempFile(entryName);
+								Files.copy(inputStream, jarFile, StandardCopyOption.REPLACE_EXISTING);
+								for (Path p : loadFromJar(jarFile)) {
+									addDexFile(entryName, p);
+								}
+								break;
+
+							default:
+								throw new JadxRuntimeException("Unexpected extension in zip: " + ext);
+						}
+					} else if (entryName.equals("instant-run.zip") && ext.equals(".dex")) {
+						Path jarFile = FileUtils.createTempFile("instant-run.zip");
+						Files.copy(inputStream, jarFile, StandardCopyOption.REPLACE_EXISTING);
+						InputFile tempFile = new InputFile(jarFile.toFile());
+						tempFile.loadFromZip(ext);
+						List<DexFile> files = tempFile.getDexFiles();
+						if (!files.isEmpty()) {
+							index += files.size();
+							this.dexFiles.addAll(files);
+						}
+					}
+				}
 			}
 		}
-		zf.close();
 		return index > 0;
 	}
 
-	private static Dex loadFromJar(File jarFile) throws DecodeException {
+	private boolean addDexFile(String entryName, @Nullable Path filePath) {
+		if (filePath == null) {
+			return false;
+		}
+		Dex dexBuf = loadDexBufFromPath(filePath, entryName);
+		if (dexBuf == null) {
+			return false;
+		}
+		dexFiles.add(new DexFile(this, entryName, dexBuf, filePath));
+		return true;
+	}
+
+	@Nullable
+	private Dex loadDexBufFromPath(Path path, String entryName) {
 		try {
-			LOG.info("converting to dex: {} ...", jarFile.getName());
-			JavaToDex j2d = new JavaToDex();
-			byte[] ba = j2d.convert(jarFile.getAbsolutePath());
-			if (ba.length == 0) {
-				throw new JadxException(j2d.isError() ? j2d.getDxErrors() : "Empty dx output");
-			}
-			if (j2d.isError()) {
-				LOG.warn("dx message: {}", j2d.getDxErrors());
-			}
-			return new Dex(ba);
-		} catch (Throwable e) {
-			throw new DecodeException("java class to dex conversion error:\n " + e.getMessage(), e);
+			return new Dex(Files.readAllBytes(path));
+		} catch (DexException e) {
+			LOG.error("Failed to load dex file: {}, error: {}", entryName, e.getMessage());
+		} catch (Exception e) {
+			LOG.error("Failed to load dex file: {}, error: {}", entryName, e.getMessage(), e);
+		}
+		return null;
+	}
+
+	@Nullable
+	private Path copyToTmpDex(String entryName, InputStream inputStream) {
+		try {
+			Path path = FileUtils.createTempFile(".dex");
+			Files.copy(inputStream, path, StandardCopyOption.REPLACE_EXISTING);
+			return path;
+		} catch (Exception e) {
+			LOG.error("Failed to load file: {}, error: {}", entryName, e.getMessage(), e);
+			return null;
 		}
 	}
 
-	private static Dex loadFromClassFile(File file) throws IOException, DecodeException {
-		File outFile = FileUtils.createTempFile("cls.jar");
-		FileOutputStream out = null;
-		JarOutputStream jo = null;
+	private static List<Path> loadFromJar(Path jar) throws DecodeException {
+		JavaToDex j2d = new JavaToDex();
 		try {
-			out = new FileOutputStream(outFile);
-			jo = new JarOutputStream(out);
+			LOG.info("converting to dex: {} ...", jar.getFileName());
+			List<Path> pathList = j2d.convert(jar);
+			if (pathList.isEmpty()) {
+				throw new JadxException("Empty dx output");
+			}
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("result dex files: {}", pathList);
+			}
+			return pathList;
+		} catch (Exception e) {
+			throw new DecodeException("java class to dex conversion error:\n " + e.getMessage(), e);
+		} finally {
+			if (j2d.isError()) {
+				LOG.warn("dx message: {}", j2d.getDxErrors());
+			}
+		}
+	}
+
+	private static List<Path> loadFromClassFile(File file) throws IOException, DecodeException {
+		Path outFile = FileUtils.createTempFile(".jar");
+		try (JarOutputStream jo = new JarOutputStream(Files.newOutputStream(outFile))) {
 			String clsName = AsmUtils.getNameFromClassFile(file);
-			if (clsName == null) {
+			if (clsName == null || !ZipSecurity.isValidZipEntryName(clsName)) {
 				throw new IOException("Can't read class name from file: " + file);
 			}
 			FileUtils.addFileToJar(jo, file, clsName + ".class");
-		} finally {
-			close(jo);
-			close(out);
 		}
 		return loadFromJar(outFile);
 	}

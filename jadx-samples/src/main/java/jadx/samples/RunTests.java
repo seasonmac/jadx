@@ -65,7 +65,7 @@ public class RunTests {
 				msg = "not extends AbstractTest";
 			}
 			System.err.println(">> "
-					+ (pass ? "PASS" : "FAIL") + "\t"
+					+ (pass ? "PASS" : "FAIL") + '\t'
 					+ clsName
 					+ (msg == null ? "" : "\t - " + msg));
 			if (exc != null) {
@@ -96,7 +96,7 @@ public class RunTests {
 	}
 
 	private static List<String> getClasses(ClassLoader clsLoader, String packageName) {
-		List<String> clsList = new ArrayList<String>();
+		List<String> clsList = new ArrayList<>();
 		URL resource = clsLoader.getResource(packageName.replace('.', '/'));
 		if (resource != null) {
 			File path = new File(resource.getFile());

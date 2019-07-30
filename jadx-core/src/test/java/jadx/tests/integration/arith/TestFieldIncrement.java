@@ -1,12 +1,12 @@
 package jadx.tests.integration.arith;
 
+import org.junit.jupiter.api.Test;
+
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
-import org.junit.Test;
-
 import static org.hamcrest.CoreMatchers.containsString;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestFieldIncrement extends IntegrationTest {
 

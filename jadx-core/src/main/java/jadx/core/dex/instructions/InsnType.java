@@ -8,6 +8,7 @@ public enum InsnType {
 
 	ARITH,
 	NEG,
+	NOT,
 
 	MOVE,
 	CAST,
@@ -64,9 +65,6 @@ public enum InsnType {
 	// just generate one argument
 	ONE_ARG,
 	PHI,
-
-	// merge all arguments in one
-	MERGE,
 
 	// TODO: now multidimensional arrays created using Array.newInstance function
 	NEW_MULTIDIM_ARRAY

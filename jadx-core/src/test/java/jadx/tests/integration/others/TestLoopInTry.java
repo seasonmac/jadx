@@ -1,12 +1,12 @@
 package jadx.tests.integration.others;
 
+import org.junit.jupiter.api.Test;
+
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
-import org.junit.Test;
-
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestLoopInTry extends IntegrationTest {
 

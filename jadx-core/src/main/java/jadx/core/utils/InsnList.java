@@ -1,10 +1,10 @@
 package jadx.core.utils;
 
-import jadx.core.dex.nodes.BlockNode;
-import jadx.core.dex.nodes.InsnNode;
-
 import java.util.Iterator;
 import java.util.List;
+
+import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.InsnNode;
 
 public final class InsnList implements Iterable<InsnNode> {
 
@@ -15,7 +15,7 @@ public final class InsnList implements Iterable<InsnNode> {
 	}
 
 	public static void remove(List<InsnNode> list, InsnNode insn) {
-		for (Iterator<InsnNode> iterator = list.iterator(); iterator.hasNext(); ) {
+		for (Iterator<InsnNode> iterator = list.iterator(); iterator.hasNext();) {
 			InsnNode next = iterator.next();
 			if (next == insn) {
 				iterator.remove();

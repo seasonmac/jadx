@@ -1,10 +1,14 @@
 package jadx.api;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.MethodNode;
-
-import java.util.List;
 
 public final class JavaMethod implements JavaNode {
 	private final MethodNode mth;
@@ -40,11 +44,27 @@ public final class JavaMethod implements JavaNode {
 	}
 
 	public List<ArgType> getArguments() {
-		return mth.getMethodInfo().getArgumentsTypes();
+		if (mth.getMethodInfo().getArgumentsTypes().isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<RegisterArg> arguments = mth.getArguments(false);
+		Stream<ArgType> argTypeStream;
+		if (arguments == null || arguments.isEmpty() || mth.isNoCode()) {
+			argTypeStream = mth.getMethodInfo().getArgumentsTypes().stream();
+		} else {
+			argTypeStream = arguments.stream().map(RegisterArg::getType);
+		}
+		return argTypeStream
+				.map(type -> ArgType.tryToResolveClassAlias(mth.dex(), type))
+				.collect(Collectors.toList());
 	}
 
 	public ArgType getReturnType() {
-		return mth.getReturnType();
+		ArgType retType = mth.getReturnType();
+		if (retType == null) {
+			retType = mth.getMethodInfo().getReturnType();
+		}
+		return ArgType.tryToResolveClassAlias(mth.dex(), retType);
 	}
 
 	public boolean isConstructor() {

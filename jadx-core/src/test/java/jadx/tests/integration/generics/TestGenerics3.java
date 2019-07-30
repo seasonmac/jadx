@@ -1,14 +1,14 @@
 package jadx.tests.integration.generics;
 
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
-import java.util.List;
-
-import org.junit.Test;
-
 import static org.hamcrest.CoreMatchers.containsString;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestGenerics3 extends IntegrationTest {
 

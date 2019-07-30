@@ -27,15 +27,8 @@ public final class NamedArg extends InsnArg implements Named {
 	}
 
 	@Override
-	public boolean equals(Object o) {
-		if (this == o) {
-			return true;
-		}
-		if (!(o instanceof NamedArg)) {
-			return false;
-		}
-		return name.equals(((NamedArg) o).name);
-
+	public InsnArg duplicate() {
+		return copyCommonParams(new NamedArg(name, type));
 	}
 
 	@Override
@@ -44,7 +37,18 @@ public final class NamedArg extends InsnArg implements Named {
 	}
 
 	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof NamedArg)) {
+			return false;
+		}
+		return name.equals(((NamedArg) o).name);
+	}
+
+	@Override
 	public String toString() {
-		return "(" + name + " " + type + ")";
+		return '(' + name + ' ' + type + ')';
 	}
 }

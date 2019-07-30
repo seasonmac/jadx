@@ -1,22 +1,21 @@
 package jadx.tests.functional;
 
-import jadx.api.JadxArgs;
-import jadx.core.Jadx;
-import jadx.core.dex.visitors.IDexTreeVisitor;
-import jadx.core.dex.visitors.JadxVisitor;
-
-import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.JadxArgs;
+import jadx.core.Jadx;
+import jadx.core.dex.visitors.IDexTreeVisitor;
+import jadx.core.dex.visitors.JadxVisitor;
+
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
-import static org.junit.Assert.assertThat;
 
 public class JadxVisitorsOrderTest {
 
@@ -24,7 +23,7 @@ public class JadxVisitorsOrderTest {
 
 	@Test
 	public void testOrder() {
-		List<IDexTreeVisitor> passes = Jadx.getPassesList(new JadxArgs(), new File("out"));
+		List<IDexTreeVisitor> passes = Jadx.getPassesList(new JadxArgs());
 
 		List<String> errors = check(passes);
 		for (String str : errors) {
@@ -34,23 +33,26 @@ public class JadxVisitorsOrderTest {
 	}
 
 	private static List<String> check(List<IDexTreeVisitor> passes) {
-		List<Class<?>> classList = new ArrayList<Class<?>>(passes.size());
+		List<Class<?>> classList = new ArrayList<>(passes.size());
 		for (IDexTreeVisitor pass : passes) {
 			classList.add(pass.getClass());
 		}
-		List<String> errors = new ArrayList<String>();
+		List<String> errors = new ArrayList<>();
 
-		Set<String> names = new HashSet<String>();
+		Set<String> names = new HashSet<>();
+		Set<Class<?>> passClsSet = new HashSet<>();
 		for (int i = 0; i < passes.size(); i++) {
 			IDexTreeVisitor pass = passes.get(i);
-			JadxVisitor info = pass.getClass().getAnnotation(JadxVisitor.class);
+			Class<? extends IDexTreeVisitor> passClass = pass.getClass();
+			JadxVisitor info = passClass.getAnnotation(JadxVisitor.class);
 			if (info == null) {
-				LOG.warn("No JadxVisitor annotation for visitor: {}", pass.getClass().getName());
+				LOG.warn("No JadxVisitor annotation for visitor: {}", passClass.getName());
 				continue;
 			}
-			String passName = pass.getClass().getSimpleName();
-			if (!names.add(passName)) {
-				errors.add("Visitor name conflict: " + passName + ", class: " + pass.getClass().getName());
+			boolean firstOccurrence = passClsSet.add(passClass);
+			String passName = passClass.getSimpleName();
+			if (firstOccurrence && !names.add(passName)) {
+				errors.add("Visitor name conflict: " + passName + ", class: " + passClass.getName());
 			}
 			for (Class<? extends IDexTreeVisitor> cls : info.runBefore()) {
 				if (classList.indexOf(cls) < i) {

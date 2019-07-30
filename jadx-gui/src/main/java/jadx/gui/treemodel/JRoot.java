@@ -1,26 +1,27 @@
 package jadx.gui.treemodel;
 
-import jadx.api.ResourceFile;
-import jadx.gui.JadxWrapper;
-import jadx.gui.treemodel.JResource.JResType;
-import jadx.gui.utils.Utils;
-
-import javax.swing.Icon;
-import javax.swing.ImageIcon;
 import java.io.File;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import javax.swing.*;
+
+import jadx.api.ResourceFile;
+import jadx.gui.JadxWrapper;
+import jadx.gui.treemodel.JResource.JResType;
+import jadx.gui.utils.NLS;
+import jadx.gui.utils.UiUtils;
+
 public class JRoot extends JNode {
 	private static final long serialVersionUID = 8888495789773527342L;
 
-	private static final ImageIcon ROOT_ICON = Utils.openIcon("java_model_obj");
+	private static final ImageIcon ROOT_ICON = UiUtils.openIcon("java_model_obj");
 
-	private final JadxWrapper wrapper;
+	private final transient JadxWrapper wrapper;
 
-	private boolean flatPackages = false;
+	private transient boolean flatPackages = false;
 
 	public JRoot(JadxWrapper wrapper) {
 		this.wrapper = wrapper;
@@ -36,16 +37,27 @@ public class JRoot extends JNode {
 			jRes.update();
 			add(jRes);
 		}
+
+		ApkSignature signature = ApkSignature.getApkSignature(wrapper);
+		if (signature != null) {
+			add(signature);
+		}
 	}
 
 	private List<JResource> getHierarchyResources(List<ResourceFile> resources) {
 		if (resources.isEmpty()) {
 			return Collections.emptyList();
 		}
-		JResource root = new JResource(null, "Resources", JResType.ROOT);
+		JResource root = new JResource(null, NLS.str("tree.resources_title"), JResType.ROOT);
 		String splitPathStr = Pattern.quote(File.separator);
 		for (ResourceFile rf : resources) {
-			String[] parts = new File(rf.getName()).getPath().split(splitPathStr);
+			String rfName;
+			if (rf.getZipRef() != null) {
+				rfName = rf.getName();
+			} else {
+				rfName = new File(rf.getName()).getName();
+			}
+			String[] parts = new File(rfName).getPath().split(splitPathStr);
 			JResource curRf = root;
 			int count = parts.length;
 			for (int i = 0; i < count; i++) {

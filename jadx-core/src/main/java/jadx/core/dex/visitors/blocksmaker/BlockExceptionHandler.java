@@ -5,6 +5,7 @@ import jadx.core.dex.attributes.AType;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.NamedArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
@@ -15,7 +16,7 @@ import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.trycatch.TryCatchBlock;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.utils.BlockUtils;
-import jadx.core.utils.InstructionRemover;
+import jadx.core.utils.InsnRemover;
 
 public class BlockExceptionHandler extends AbstractVisitor {
 
@@ -34,7 +35,7 @@ public class BlockExceptionHandler extends AbstractVisitor {
 			processExceptionHandlers(mth, block);
 		}
 		for (BlockNode block : mth.getBasicBlocks()) {
-			processTryCatchBlocks(mth, block);
+			processTryCatchBlocks(block);
 		}
 	}
 
@@ -42,25 +43,26 @@ public class BlockExceptionHandler extends AbstractVisitor {
 	 * Set exception handler attribute for whole block
 	 */
 	private static void markExceptionHandlers(BlockNode block) {
-		if (block.getInstructions().isEmpty()) {
-			return;
-		}
-		InsnNode me = block.getInstructions().get(0);
-		ExcHandlerAttr handlerAttr = me.get(AType.EXC_HANDLER);
-		if (handlerAttr == null || me.getType() != InsnType.MOVE_EXCEPTION) {
+		ExcHandlerAttr handlerAttr = block.get(AType.EXC_HANDLER);
+		if (handlerAttr == null) {
 			return;
 		}
 		ExceptionHandler excHandler = handlerAttr.getHandler();
-		block.addAttr(handlerAttr);
-		// set correct type for 'move-exception' operation
-		ArgType type = excHandler.isCatchAll() ? ArgType.THROWABLE : excHandler.getCatchType().getType();
-
-		RegisterArg resArg = me.getResult();
-		resArg = InsnArg.reg(resArg.getRegNum(), type);
-		me.setResult(resArg);
-		me.add(AFlag.DONT_INLINE);
-
-		excHandler.setArg(resArg);
+		ArgType argType = excHandler.getArgType();
+		InsnNode me = BlockUtils.getLastInsn(block);
+		if (me != null && me.getType() == InsnType.MOVE_EXCEPTION) {
+			// set correct type for 'move-exception' operation
+			RegisterArg resArg = InsnArg.reg(me.getResult().getRegNum(), argType);
+			resArg.copyAttributesFrom(me);
+			me.setResult(resArg);
+			me.add(AFlag.DONT_INLINE);
+			resArg.add(AFlag.CUSTOM_DECLARE);
+			excHandler.setArg(resArg);
+			me.addAttr(handlerAttr);
+			return;
+		}
+		// handler arguments not used
+		excHandler.setArg(new NamedArg("unused", argType));
 	}
 
 	private static void processExceptionHandlers(MethodNode mth, BlockNode block) {
@@ -75,13 +77,13 @@ public class BlockExceptionHandler extends AbstractVisitor {
 		}
 		for (BlockNode excBlock : excHandler.getBlocks()) {
 			// remove 'monitor-exit' from exception handler blocks
-			InstructionRemover remover = new InstructionRemover(mth, excBlock);
+			InsnRemover remover = new InsnRemover(mth, excBlock);
 			for (InsnNode insn : excBlock.getInstructions()) {
 				if (insn.getType() == InsnType.MONITOR_ENTER) {
 					break;
 				}
 				if (insn.getType() == InsnType.MONITOR_EXIT) {
-					remover.add(insn);
+					remover.addAndUnbind(insn);
 				}
 			}
 			remover.perform();
@@ -105,9 +107,7 @@ public class BlockExceptionHandler extends AbstractVisitor {
 	private static boolean onlyAllHandler(TryCatchBlock tryBlock) {
 		if (tryBlock.getHandlersCount() == 1) {
 			ExceptionHandler eh = tryBlock.getHandlers().iterator().next();
-			if (eh.isCatchAll() || eh.isFinally()) {
-				return true;
-			}
+			return eh.isCatchAll() || eh.isFinally();
 		}
 		return false;
 	}
@@ -115,7 +115,7 @@ public class BlockExceptionHandler extends AbstractVisitor {
 	/**
 	 * If all instructions in block have same 'catch' attribute mark it as 'TryCatch' block.
 	 */
-	private static void processTryCatchBlocks(MethodNode mth, BlockNode block) {
+	private static void processTryCatchBlocks(BlockNode block) {
 		CatchAttr commonCatchAttr = null;
 		for (InsnNode insn : block.getInstructions()) {
 			CatchAttr catchAttr = insn.get(AType.CATCH_BLOCK);
@@ -131,21 +131,6 @@ public class BlockExceptionHandler extends AbstractVisitor {
 		}
 		if (commonCatchAttr != null) {
 			block.addAttr(commonCatchAttr);
-			// connect handler to block
-			for (ExceptionHandler handler : commonCatchAttr.getTryBlock().getHandlers()) {
-				connectHandler(mth, handler);
-			}
-		}
-	}
-
-	private static void connectHandler(MethodNode mth, ExceptionHandler handler) {
-		int addr = handler.getHandleOffset();
-		for (BlockNode block : mth.getBasicBlocks()) {
-			ExcHandlerAttr bh = block.get(AType.EXC_HANDLER);
-			if (bh != null && bh.getHandler().getHandleOffset() == addr) {
-				handler.setHandlerBlock(block);
-				break;
-			}
 		}
 	}
 }

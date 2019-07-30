@@ -1,14 +1,9 @@
 package jadx.core.codegen;
 
-import jadx.api.CodePosition;
-import jadx.core.dex.attributes.nodes.LineAttrNode;
-import jadx.core.utils.files.FileUtils;
-
 import java.io.File;
 import java.io.PrintWriter;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -16,26 +11,33 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static jadx.core.utils.files.FileUtils.close;
+import jadx.api.CodePosition;
+import jadx.api.ICodeInfo;
+import jadx.core.dex.attributes.nodes.LineAttrNode;
+import jadx.core.utils.StringUtils;
+import jadx.core.utils.files.FileUtils;
+import jadx.core.utils.files.ZipSecurity;
 
-public class CodeWriter {
+public class CodeWriter implements ICodeInfo {
 	private static final Logger LOG = LoggerFactory.getLogger(CodeWriter.class);
 
 	public static final String NL = System.getProperty("line.separator");
-	public static final String INDENT = "    ";
+	public static final String INDENT_STR = "    ";
 
 	private static final boolean ADD_LINE_NUMBERS = false;
 
 	private static final String[] INDENT_CACHE = {
 			"",
-			INDENT,
-			INDENT + INDENT,
-			INDENT + INDENT + INDENT,
-			INDENT + INDENT + INDENT + INDENT,
-			INDENT + INDENT + INDENT + INDENT + INDENT,
+			INDENT_STR,
+			INDENT_STR + INDENT_STR,
+			INDENT_STR + INDENT_STR + INDENT_STR,
+			INDENT_STR + INDENT_STR + INDENT_STR + INDENT_STR,
+			INDENT_STR + INDENT_STR + INDENT_STR + INDENT_STR + INDENT_STR,
 	};
 
-	private StringBuilder buf = new StringBuilder();
+	public static final CodeWriter EMPTY = new CodeWriter().finish();
+
+	private StringBuilder buf;
 	@Nullable
 	private String code;
 	private String indentStr;
@@ -47,11 +49,19 @@ public class CodeWriter {
 	private Map<Integer, Integer> lineMap = Collections.emptyMap();
 
 	public CodeWriter() {
+		this.buf = new StringBuilder();
 		this.indent = 0;
 		this.indentStr = "";
 		if (ADD_LINE_NUMBERS) {
-			incIndent(2);
+			incIndent(3);
+			add(indentStr);
 		}
+	}
+
+	// create filled instance (just string wrapper)
+	public CodeWriter(String code) {
+		this.buf = null;
+		this.code = code;
 	}
 
 	public CodeWriter startLine() {
@@ -94,6 +104,17 @@ public class CodeWriter {
 		return this;
 	}
 
+	public CodeWriter addMultiLine(String str) {
+		if (str.contains(NL)) {
+			buf.append(str.replace(NL, NL + indentStr));
+			line += StringUtils.countMatches(str, NL);
+			offset = 0;
+		} else {
+			buf.append(str);
+		}
+		return this;
+	}
+
 	public CodeWriter add(String str) {
 		buf.append(str);
 		offset += str.length();
@@ -127,7 +148,7 @@ public class CodeWriter {
 	}
 
 	public CodeWriter addIndent() {
-		add(INDENT);
+		add(INDENT_STR);
 		return this;
 	}
 
@@ -148,9 +169,9 @@ public class CodeWriter {
 		if (curIndent < INDENT_CACHE.length) {
 			this.indentStr = INDENT_CACHE[curIndent];
 		} else {
-			StringBuilder s = new StringBuilder(curIndent * INDENT.length());
+			StringBuilder s = new StringBuilder(curIndent * INDENT_STR.length());
 			for (int i = 0; i < curIndent; i++) {
-				s.append(INDENT);
+				s.append(INDENT_STR);
 			}
 			this.indentStr = s.toString();
 		}
@@ -182,6 +203,11 @@ public class CodeWriter {
 		return indent;
 	}
 
+	public void setIndent(int indent) {
+		this.indent = indent;
+		updateIndent();
+	}
+
 	public int getLine() {
 		return line;
 	}
@@ -207,13 +233,18 @@ public class CodeWriter {
 		attachAnnotation(obj, new CodePosition(line, offset + 1));
 	}
 
+	public void attachLineAnnotation(Object obj) {
+		attachAnnotation(obj, new CodePosition(line, 0));
+	}
+
 	private Object attachAnnotation(Object obj, CodePosition pos) {
 		if (annotations.isEmpty()) {
-			annotations = new HashMap<CodePosition, Object>();
+			annotations = new HashMap<>();
 		}
 		return annotations.put(pos, obj);
 	}
 
+	@Override
 	public Map<CodePosition, Object> getAnnotations() {
 		return annotations;
 	}
@@ -227,36 +258,38 @@ public class CodeWriter {
 
 	private void attachSourceLine(int decompiledLine, int sourceLine) {
 		if (lineMap.isEmpty()) {
-			lineMap = new TreeMap<Integer, Integer>();
+			lineMap = new TreeMap<>();
 		}
 		lineMap.put(decompiledLine, sourceLine);
 	}
 
+	@Override
 	public Map<Integer, Integer> getLineMapping() {
 		return lineMap;
 	}
 
-	public void finish() {
+	public CodeWriter finish() {
 		removeFirstEmptyLine();
 		buf.trimToSize();
 		code = buf.toString();
 		buf = null;
 
-		Iterator<Map.Entry<CodePosition, Object>> it = annotations.entrySet().iterator();
-		while (it.hasNext()) {
-			Map.Entry<CodePosition, Object> entry = it.next();
+		annotations.entrySet().removeIf(entry -> {
 			Object v = entry.getValue();
 			if (v instanceof DefinitionWrapper) {
 				LineAttrNode l = ((DefinitionWrapper) v).getNode();
 				l.setDecompiledLine(entry.getKey().getLine());
-				it.remove();
+				return true;
 			}
-		}
+			return false;
+		});
+		return this;
 	}
 
 	private void removeFirstEmptyLine() {
-		if (buf.indexOf(NL) == 0) {
-			buf.delete(0, NL.length());
+		int len = NL.length();
+		if (buf.length() > len && buf.substring(0, len).equals(NL)) {
+			buf.delete(0, len);
 		}
 	}
 
@@ -264,7 +297,11 @@ public class CodeWriter {
 		return buf.length();
 	}
 
+	@Override
 	public String getCodeStr() {
+		if (code == null) {
+			throw new NullPointerException("Code not set");
+		}
 		return code;
 	}
 
@@ -274,10 +311,16 @@ public class CodeWriter {
 	}
 
 	public void save(File dir, String subDir, String fileName) {
+		if (!ZipSecurity.isValidZipEntryName(subDir) || !ZipSecurity.isValidZipEntryName(fileName)) {
+			return;
+		}
 		save(dir, new File(subDir, fileName).getPath());
 	}
 
 	public void save(File dir, String fileName) {
+		if (!ZipSecurity.isValidZipEntryName(fileName)) {
+			return;
+		}
 		save(new File(dir, fileName));
 	}
 
@@ -286,15 +329,10 @@ public class CodeWriter {
 			finish();
 		}
 		File outFile = FileUtils.prepareFile(file);
-		PrintWriter out = null;
-		try {
-			out = new PrintWriter(outFile, "UTF-8");
+		try (PrintWriter out = new PrintWriter(outFile, "UTF-8")) {
 			out.println(code);
 		} catch (Exception e) {
 			LOG.error("Save file error", e);
-		} finally {
-			close(out);
 		}
 	}
-
 }

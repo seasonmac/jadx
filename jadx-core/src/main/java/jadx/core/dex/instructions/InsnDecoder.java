@@ -1,16 +1,11 @@
 package jadx.core.dex.instructions;
 
-import jadx.core.dex.info.FieldInfo;
-import jadx.core.dex.info.MethodInfo;
-import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.instructions.args.InsnArg;
-import jadx.core.dex.instructions.args.PrimitiveType;
-import jadx.core.dex.instructions.args.RegisterArg;
-import jadx.core.dex.nodes.DexNode;
-import jadx.core.dex.nodes.InsnNode;
-import jadx.core.dex.nodes.MethodNode;
-import jadx.core.utils.InsnUtils;
-import jadx.core.utils.exceptions.DecodeException;
+import java.io.EOFException;
+import java.util.function.Predicate;
+
+import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.android.dex.Code;
 import com.android.dx.io.OpcodeInfo;
@@ -21,7 +16,22 @@ import com.android.dx.io.instructions.PackedSwitchPayloadDecodedInstruction;
 import com.android.dx.io.instructions.ShortArrayCodeInput;
 import com.android.dx.io.instructions.SparseSwitchPayloadDecodedInstruction;
 
+import jadx.core.Consts;
+import jadx.core.dex.info.FieldInfo;
+import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.LiteralArg;
+import jadx.core.dex.instructions.args.RegisterArg;
+import jadx.core.dex.nodes.DexNode;
+import jadx.core.dex.nodes.FieldNode;
+import jadx.core.dex.nodes.InsnNode;
+import jadx.core.dex.nodes.MethodNode;
+import jadx.core.utils.InsnUtils;
+import jadx.core.utils.exceptions.DecodeException;
+
 public class InsnDecoder {
+	private static final Logger LOG = LoggerFactory.getLogger(InsnDecoder.class);
 
 	private final MethodNode method;
 	private final DexNode dex;
@@ -37,15 +47,27 @@ public class InsnDecoder {
 		int size = encodedInstructions.length;
 		DecodedInstruction[] decoded = new DecodedInstruction[size];
 		ShortArrayCodeInput in = new ShortArrayCodeInput(encodedInstructions);
-
 		try {
 			while (in.hasMore()) {
-				decoded[in.cursor()] = DecodedInstruction.decode(in);
+				decoded[in.cursor()] = decodeRawInsn(in);
 			}
 		} catch (Exception e) {
-			throw new DecodeException(method, "", e);
+			throw new DecodeException(method, e.getMessage(), e);
 		}
 		insnArr = decoded;
+	}
+
+	private DecodedInstruction decodeRawInsn(ShortArrayCodeInput in) throws EOFException {
+		int opcodeUnit = in.read();
+		int opcode = Opcodes.extractOpcodeFromUnit(opcodeUnit);
+		OpcodeInfo.Info opcodeInfo;
+		try {
+			opcodeInfo = OpcodeInfo.get(opcode);
+		} catch (IllegalArgumentException e) {
+			LOG.warn("Ignore decode error: '{}', replace with NOP instruction", e.getMessage());
+			opcodeInfo = OpcodeInfo.NOP;
+		}
+		return opcodeInfo.getFormat().decode(opcodeUnit, in);
 	}
 
 	public InsnNode[] process() throws DecodeException {
@@ -54,9 +76,7 @@ public class InsnDecoder {
 			DecodedInstruction rawInsn = insnArr[i];
 			if (rawInsn != null) {
 				InsnNode insn = decode(rawInsn, i);
-				if (insn != null) {
-					insn.setOffset(i);
-				}
+				insn.setOffset(i);
 				instructions[i] = insn;
 			} else {
 				instructions[i] = null;
@@ -66,13 +86,14 @@ public class InsnDecoder {
 		return instructions;
 	}
 
+	@NotNull
 	private InsnNode decode(DecodedInstruction insn, int offset) throws DecodeException {
 		switch (insn.getOpcode()) {
 			case Opcodes.NOP:
 			case Opcodes.PACKED_SWITCH_PAYLOAD:
 			case Opcodes.SPARSE_SWITCH_PAYLOAD:
 			case Opcodes.FILL_ARRAY_DATA_PAYLOAD:
-				return null;
+				return new InsnNode(InsnType.NOP, 0);
 
 			// move-result will be process in invoke and filled-new-array instructions
 			case Opcodes.MOVE_RESULT:
@@ -84,27 +105,28 @@ public class InsnDecoder {
 			case Opcodes.CONST_4:
 			case Opcodes.CONST_16:
 			case Opcodes.CONST_HIGH16:
-				return insn(InsnType.CONST, InsnArg.reg(insn, 0, ArgType.NARROW),
-						InsnArg.lit(insn, ArgType.NARROW));
+				LiteralArg narrowLitArg = InsnArg.lit(insn, ArgType.NARROW);
+				return insn(InsnType.CONST, InsnArg.reg(insn, 0, narrowLitArg.getType()), narrowLitArg);
 
 			case Opcodes.CONST_WIDE:
 			case Opcodes.CONST_WIDE_16:
 			case Opcodes.CONST_WIDE_32:
 			case Opcodes.CONST_WIDE_HIGH16:
-				return insn(InsnType.CONST, InsnArg.reg(insn, 0, ArgType.WIDE),
-						InsnArg.lit(insn, ArgType.WIDE));
+				LiteralArg wideLitArg = InsnArg.lit(insn, ArgType.WIDE);
+				return insn(InsnType.CONST, InsnArg.reg(insn, 0, wideLitArg.getType()), wideLitArg);
 
 			case Opcodes.CONST_STRING:
-			case Opcodes.CONST_STRING_JUMBO: {
-				InsnNode node = new ConstStringNode(dex.getString(insn.getIndex()));
-				node.setResult(InsnArg.reg(insn, 0, ArgType.STRING));
-				return node;
-			}
+			case Opcodes.CONST_STRING_JUMBO:
+				InsnNode constStrInsn = new ConstStringNode(dex.getString(insn.getIndex()));
+				constStrInsn.setResult(InsnArg.reg(insn, 0, ArgType.STRING));
+				return constStrInsn;
 
 			case Opcodes.CONST_CLASS: {
-				InsnNode node = new ConstClassNode(dex.getType(insn.getIndex()));
-				node.setResult(InsnArg.reg(insn, 0, ArgType.CLASS));
-				return node;
+				ArgType clsType = dex.getType(insn.getIndex());
+				InsnNode constClsInsn = new ConstClassNode(clsType);
+				constClsInsn.setResult(
+						InsnArg.reg(insn, 0, ArgType.generic(Consts.CLASS_CLASS, clsType)));
+				return constClsInsn;
 			}
 
 			case Opcodes.MOVE:
@@ -307,6 +329,11 @@ public class InsnDecoder {
 			case Opcodes.NEG_DOUBLE:
 				return neg(insn, ArgType.DOUBLE);
 
+			case Opcodes.NOT_INT:
+				return not(insn, ArgType.INT);
+			case Opcodes.NOT_LONG:
+				return not(insn, ArgType.LONG);
+
 			case Opcodes.INT_TO_BYTE:
 				return cast(insn, ArgType.INT, ArgType.BYTE);
 			case Opcodes.INT_TO_CHAR:
@@ -383,12 +410,10 @@ public class InsnDecoder {
 				return new GotoNode(insn.getTarget());
 
 			case Opcodes.THROW:
-				return insn(InsnType.THROW, null,
-						InsnArg.reg(insn, 0, ArgType.unknown(PrimitiveType.OBJECT)));
+				return insn(InsnType.THROW, null, InsnArg.reg(insn, 0, ArgType.THROWABLE));
 
 			case Opcodes.MOVE_EXCEPTION:
-				return insn(InsnType.MOVE_EXCEPTION,
-						InsnArg.reg(insn, 0, ArgType.unknown(PrimitiveType.OBJECT)));
+				return insn(InsnType.MOVE_EXCEPTION, InsnArg.reg(insn, 0, ArgType.UNKNOWN_OBJECT_NO_ARRAY));
 
 			case Opcodes.RETURN_VOID:
 				return new InsnNode(InsnType.RETURN, 0);
@@ -400,20 +425,18 @@ public class InsnDecoder {
 						null,
 						InsnArg.reg(insn, 0, method.getReturnType()));
 
-			case Opcodes.INSTANCE_OF: {
-				InsnNode node = new IndexInsnNode(InsnType.INSTANCE_OF, dex.getType(insn.getIndex()), 1);
-				node.setResult(InsnArg.reg(insn, 0, ArgType.BOOLEAN));
-				node.addArg(InsnArg.reg(insn, 1, ArgType.UNKNOWN_OBJECT));
-				return node;
-			}
+			case Opcodes.INSTANCE_OF:
+				InsnNode instInsn = new IndexInsnNode(InsnType.INSTANCE_OF, dex.getType(insn.getIndex()), 1);
+				instInsn.setResult(InsnArg.reg(insn, 0, ArgType.BOOLEAN));
+				instInsn.addArg(InsnArg.reg(insn, 1, ArgType.UNKNOWN_OBJECT));
+				return instInsn;
 
-			case Opcodes.CHECK_CAST: {
+			case Opcodes.CHECK_CAST:
 				ArgType castType = dex.getType(insn.getIndex());
-				InsnNode node = new IndexInsnNode(InsnType.CHECK_CAST, castType, 1);
-				node.setResult(InsnArg.reg(insn, 0, castType));
-				node.addArg(InsnArg.reg(insn, 0, ArgType.UNKNOWN_OBJECT));
-				return node;
-			}
+				InsnNode checkCastInsn = new IndexInsnNode(InsnType.CHECK_CAST, castType, 1);
+				checkCastInsn.setResult(InsnArg.reg(insn, 0, castType));
+				checkCastInsn.addArg(InsnArg.reg(insn, 0, ArgType.UNKNOWN_OBJECT));
+				return checkCastInsn;
 
 			case Opcodes.IGET:
 			case Opcodes.IGET_BOOLEAN:
@@ -421,13 +444,12 @@ public class InsnDecoder {
 			case Opcodes.IGET_CHAR:
 			case Opcodes.IGET_SHORT:
 			case Opcodes.IGET_WIDE:
-			case Opcodes.IGET_OBJECT: {
-				FieldInfo field = FieldInfo.fromDex(dex, insn.getIndex());
-				InsnNode node = new IndexInsnNode(InsnType.IGET, field, 1);
-				node.setResult(InsnArg.reg(insn, 0, field.getType()));
-				node.addArg(InsnArg.reg(insn, 1, field.getDeclClass().getType()));
-				return node;
-			}
+			case Opcodes.IGET_OBJECT:
+				FieldInfo igetFld = FieldInfo.fromDex(dex, insn.getIndex());
+				InsnNode igetInsn = new IndexInsnNode(InsnType.IGET, igetFld, 1);
+				igetInsn.setResult(InsnArg.reg(insn, 0, tryResolveFieldType(igetFld)));
+				igetInsn.addArg(InsnArg.reg(insn, 1, igetFld.getDeclClass().getType()));
+				return igetInsn;
 
 			case Opcodes.IPUT:
 			case Opcodes.IPUT_BOOLEAN:
@@ -435,13 +457,12 @@ public class InsnDecoder {
 			case Opcodes.IPUT_CHAR:
 			case Opcodes.IPUT_SHORT:
 			case Opcodes.IPUT_WIDE:
-			case Opcodes.IPUT_OBJECT: {
-				FieldInfo field = FieldInfo.fromDex(dex, insn.getIndex());
-				InsnNode node = new IndexInsnNode(InsnType.IPUT, field, 2);
-				node.addArg(InsnArg.reg(insn, 0, field.getType()));
-				node.addArg(InsnArg.reg(insn, 1, field.getDeclClass().getType()));
-				return node;
-			}
+			case Opcodes.IPUT_OBJECT:
+				FieldInfo iputFld = FieldInfo.fromDex(dex, insn.getIndex());
+				InsnNode iputInsn = new IndexInsnNode(InsnType.IPUT, iputFld, 2);
+				iputInsn.addArg(InsnArg.reg(insn, 0, tryResolveFieldType(iputFld)));
+				iputInsn.addArg(InsnArg.reg(insn, 1, iputFld.getDeclClass().getType()));
+				return iputInsn;
 
 			case Opcodes.SGET:
 			case Opcodes.SGET_BOOLEAN:
@@ -449,12 +470,11 @@ public class InsnDecoder {
 			case Opcodes.SGET_CHAR:
 			case Opcodes.SGET_SHORT:
 			case Opcodes.SGET_WIDE:
-			case Opcodes.SGET_OBJECT: {
-				FieldInfo field = FieldInfo.fromDex(dex, insn.getIndex());
-				InsnNode node = new IndexInsnNode(InsnType.SGET, field, 0);
-				node.setResult(InsnArg.reg(insn, 0, field.getType()));
-				return node;
-			}
+			case Opcodes.SGET_OBJECT:
+				FieldInfo sgetFld = FieldInfo.fromDex(dex, insn.getIndex());
+				InsnNode sgetInsn = new IndexInsnNode(InsnType.SGET, sgetFld, 0);
+				sgetInsn.setResult(InsnArg.reg(insn, 0, tryResolveFieldType(sgetFld)));
+				return sgetInsn;
 
 			case Opcodes.SPUT:
 			case Opcodes.SPUT_BOOLEAN:
@@ -462,22 +482,20 @@ public class InsnDecoder {
 			case Opcodes.SPUT_CHAR:
 			case Opcodes.SPUT_SHORT:
 			case Opcodes.SPUT_WIDE:
-			case Opcodes.SPUT_OBJECT: {
-				FieldInfo field = FieldInfo.fromDex(dex, insn.getIndex());
-				InsnNode node = new IndexInsnNode(InsnType.SPUT, field, 1);
-				node.addArg(InsnArg.reg(insn, 0, field.getType()));
-				return node;
-			}
+			case Opcodes.SPUT_OBJECT:
+				FieldInfo sputFld = FieldInfo.fromDex(dex, insn.getIndex());
+				InsnNode sputInsn = new IndexInsnNode(InsnType.SPUT, sputFld, 1);
+				sputInsn.addArg(InsnArg.reg(insn, 0, tryResolveFieldType(sputFld)));
+				return sputInsn;
 
-			case Opcodes.ARRAY_LENGTH: {
-				InsnNode node = new InsnNode(InsnType.ARRAY_LENGTH, 1);
-				node.setResult(InsnArg.reg(insn, 0, ArgType.INT));
-				node.addArg(InsnArg.reg(insn, 1, ArgType.array(ArgType.UNKNOWN)));
-				return node;
-			}
+			case Opcodes.ARRAY_LENGTH:
+				InsnNode arrLenInsn = new InsnNode(InsnType.ARRAY_LENGTH, 1);
+				arrLenInsn.setResult(InsnArg.reg(insn, 0, ArgType.INT));
+				arrLenInsn.addArg(InsnArg.reg(insn, 1, ArgType.array(ArgType.UNKNOWN)));
+				return arrLenInsn;
 
 			case Opcodes.AGET:
-				return arrayGet(insn, ArgType.NARROW);
+				return arrayGet(insn, ArgType.INT_FLOAT);
 			case Opcodes.AGET_BOOLEAN:
 				return arrayGet(insn, ArgType.BOOLEAN);
 			case Opcodes.AGET_BYTE:
@@ -492,7 +510,7 @@ public class InsnDecoder {
 				return arrayGet(insn, ArgType.UNKNOWN_OBJECT);
 
 			case Opcodes.APUT:
-				return arrayPut(insn, ArgType.NARROW);
+				return arrayPut(insn, ArgType.INT_FLOAT);
 			case Opcodes.APUT_BOOLEAN:
 				return arrayPut(insn, ArgType.BOOLEAN);
 			case Opcodes.APUT_BYTE:
@@ -531,14 +549,16 @@ public class InsnDecoder {
 				return invoke(insn, offset, InvokeType.VIRTUAL, true);
 
 			case Opcodes.NEW_INSTANCE:
-				return insn(InsnType.NEW_INSTANCE,
-						InsnArg.reg(insn, 0, dex.getType(insn.getIndex())));
+				ArgType clsType = dex.getType(insn.getIndex());
+				IndexInsnNode newInstInsn = new IndexInsnNode(InsnType.NEW_INSTANCE, clsType, 0);
+				newInstInsn.setResult(InsnArg.reg(insn, 0, clsType));
+				return newInstInsn;
 
 			case Opcodes.NEW_ARRAY:
 				ArgType arrType = dex.getType(insn.getIndex());
 				return new NewArrayNode(arrType,
 						InsnArg.reg(insn, 0, arrType),
-						InsnArg.reg(insn, 1, ArgType.INT));
+						InsnArg.typeImmutableReg(insn, 1, ArgType.INT));
 
 			case Opcodes.FILL_ARRAY_DATA:
 				return fillArray(insn);
@@ -563,14 +583,23 @@ public class InsnDecoder {
 				return insn(InsnType.MONITOR_EXIT,
 						null,
 						InsnArg.reg(insn, 0, ArgType.UNKNOWN_OBJECT));
-		}
 
-		throw new DecodeException("Unknown instruction: " + OpcodeInfo.getName(insn.getOpcode()));
+			default:
+				throw new DecodeException("Unknown instruction: '" + OpcodeInfo.getName(insn.getOpcode()) + '\'');
+		}
+	}
+
+	private ArgType tryResolveFieldType(FieldInfo igetFld) {
+		FieldNode fieldNode = dex.resolveField(igetFld);
+		if (fieldNode != null) {
+			return fieldNode.getType();
+		}
+		return igetFld.getType();
 	}
 
 	private InsnNode decodeSwitch(DecodedInstruction insn, int offset, boolean packed) {
 		int payloadOffset = insn.getTarget();
-		DecodedInstruction payload = insnArr[payloadOffset];
+		DecodedInstruction payload = getInsnByOffsetSkipNop(insnArr, payloadOffset);
 		Object[] keys;
 		int[] targets;
 		if (packed) {
@@ -598,7 +627,7 @@ public class InsnDecoder {
 	}
 
 	private InsnNode fillArray(DecodedInstruction insn) {
-		DecodedInstruction payload = insnArr[insn.getTarget()];
+		DecodedInstruction payload = getInsnByOffsetSkipNop(insnArr, insn.getTarget());
 		return new FillArrayNode(insn.getA(), (FillArrayDataPayloadDecodedInstruction) payload);
 	}
 
@@ -652,30 +681,45 @@ public class InsnDecoder {
 
 	private InsnNode arrayGet(DecodedInstruction insn, ArgType argType) {
 		InsnNode inode = new InsnNode(InsnType.AGET, 2);
-		inode.setResult(InsnArg.reg(insn, 0, argType));
-		inode.addArg(InsnArg.reg(insn, 1, ArgType.unknown(PrimitiveType.ARRAY)));
-		inode.addArg(InsnArg.reg(insn, 2, ArgType.INT));
+		inode.setResult(InsnArg.typeImmutableIfKnownReg(insn, 0, argType));
+		inode.addArg(InsnArg.typeImmutableIfKnownReg(insn, 1, ArgType.array(argType)));
+		inode.addArg(InsnArg.reg(insn, 2, ArgType.NARROW_INTEGRAL));
 		return inode;
 	}
 
 	private InsnNode arrayPut(DecodedInstruction insn, ArgType argType) {
 		InsnNode inode = new InsnNode(InsnType.APUT, 3);
-		inode.addArg(InsnArg.reg(insn, 1, ArgType.unknown(PrimitiveType.ARRAY)));
-		inode.addArg(InsnArg.reg(insn, 2, ArgType.INT));
-		inode.addArg(InsnArg.reg(insn, 0, argType));
+		inode.addArg(InsnArg.typeImmutableIfKnownReg(insn, 1, ArgType.array(argType)));
+		inode.addArg(InsnArg.reg(insn, 2, ArgType.NARROW_INTEGRAL));
+		inode.addArg(InsnArg.typeImmutableIfKnownReg(insn, 0, argType));
 		return inode;
 	}
 
 	private InsnNode arith(DecodedInstruction insn, ArithOp op, ArgType type) {
-		return new ArithNode(insn, op, type, false);
+		return new ArithNode(insn, op, fixTypeForBitOps(op, type), false);
 	}
 
 	private InsnNode arithLit(DecodedInstruction insn, ArithOp op, ArgType type) {
-		return new ArithNode(insn, op, type, true);
+		return new ArithNode(insn, op, fixTypeForBitOps(op, type), true);
+	}
+
+	private ArgType fixTypeForBitOps(ArithOp op, ArgType type) {
+		if (type == ArgType.INT
+				&& (op == ArithOp.AND || op == ArithOp.OR || op == ArithOp.XOR)) {
+			return ArgType.NARROW_NUMBERS_NO_FLOAT;
+		}
+		return type;
 	}
 
 	private InsnNode neg(DecodedInstruction insn, ArgType type) {
 		InsnNode inode = new InsnNode(InsnType.NEG, 1);
+		inode.setResult(InsnArg.reg(insn, 0, type));
+		inode.addArg(InsnArg.reg(insn, 1, type));
+		return inode;
+	}
+
+	private InsnNode not(DecodedInstruction insn, ArgType type) {
+		InsnNode inode = new InsnNode(InsnType.NOT, 1);
 		inode.setResult(InsnArg.reg(insn, 0, type));
 		inode.addArg(InsnArg.reg(insn, 1, type));
 		return inode;
@@ -695,7 +739,7 @@ public class InsnDecoder {
 	}
 
 	private int getMoveResultRegister(DecodedInstruction[] insnArr, int offset) {
-		int nextOffset = getNextInsnOffset(insnArr, offset);
+		int nextOffset = getNextInsnOffsetSkipNop(insnArr, offset);
 		if (nextOffset >= 0) {
 			DecodedInstruction next = insnArr[nextOffset];
 			int opc = next.getOpcode();
@@ -708,21 +752,35 @@ public class InsnDecoder {
 		return -1;
 	}
 
-	public static int getPrevInsnOffset(Object[] insnArr, int offset) {
-		int i = offset - 1;
-		while (i >= 0 && insnArr[i] == null) {
-			i--;
+	private static DecodedInstruction getInsnByOffsetSkipNop(DecodedInstruction[] insnArr, int offset) {
+		DecodedInstruction payload = insnArr[offset];
+		if (payload.getOpcode() == Opcodes.NOP) {
+			return insnArr[getNextInsnOffsetSkipNop(insnArr, offset)];
 		}
-		if (i < 0) {
-			return -1;
-		}
-		return i;
+		return payload;
 	}
 
-	public static int getNextInsnOffset(Object[] insnArr, int offset) {
+	public static int getNextInsnOffset(DecodedInstruction[] insnArr, int offset) {
+		return getNextInsnOffset(insnArr, offset, null);
+	}
+
+	public static int getNextInsnOffsetSkipNop(DecodedInstruction[] insnArr, int offset) {
+		return getNextInsnOffset(insnArr, offset, i -> i.getOpcode() == Opcodes.NOP);
+	}
+
+	public static int getNextInsnOffset(InsnNode[] insnArr, int offset) {
+		return getNextInsnOffset(insnArr, offset, null);
+	}
+
+	public static <T> int getNextInsnOffset(T[] insnArr, int offset, Predicate<T> skip) {
 		int i = offset + 1;
-		while (i < insnArr.length && insnArr[i] == null) {
-			i++;
+		while (i < insnArr.length) {
+			T insn = insnArr[i];
+			if (insn == null || (skip != null && skip.test(insn))) {
+				i++;
+			} else {
+				break;
+			}
 		}
 		if (i >= insnArr.length) {
 			return -1;

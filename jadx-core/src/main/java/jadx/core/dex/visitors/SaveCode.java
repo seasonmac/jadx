@@ -1,33 +1,52 @@
 package jadx.core.dex.visitors;
 
-import jadx.api.IJadxArgs;
-import jadx.core.codegen.CodeWriter;
-import jadx.core.dex.nodes.ClassNode;
-import jadx.core.utils.exceptions.CodegenException;
-
 import java.io.File;
 
-public class SaveCode extends AbstractVisitor {
-	private final File dir;
-	private final IJadxArgs args;
+import jadx.api.ICodeInfo;
+import jadx.api.JadxArgs;
+import jadx.core.codegen.CodeWriter;
+import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.nodes.ClassNode;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
-	public SaveCode(File dir, IJadxArgs args) {
-		this.args = args;
-		this.dir = dir;
+public class SaveCode {
+
+	private SaveCode() {
 	}
 
-	@Override
-	public boolean visit(ClassNode cls) throws CodegenException {
-		save(dir, args, cls);
-		return false;
-	}
-
-	public static void save(File dir, IJadxArgs args, ClassNode cls) {
-		CodeWriter clsCode = cls.getCode();
-		String fileName = cls.getClassInfo().getFullPath() + ".java";
-		if (args.isFallbackMode()) {
-			fileName += ".jadx";
+	public static void save(File dir, ClassNode cls) {
+		if (cls.contains(AFlag.DONT_GENERATE)) {
+			return;
 		}
+		ICodeInfo code = cls.getCode();
+		if (code == null) {
+			throw new JadxRuntimeException("Code not generated for class " + cls.getFullName());
+		}
+		if (code == CodeWriter.EMPTY) {
+			return;
+		}
+		CodeWriter clsCode;
+		if (code instanceof CodeWriter) {
+			clsCode = (CodeWriter) code;
+		} else {
+			// TODO: move 'save' method from CodeWriter
+			clsCode = new CodeWriter(code.getCodeStr());
+		}
+		String fileName = cls.getClassInfo().getAliasFullPath() + getFileExtension(cls);
 		clsCode.save(dir, fileName);
+	}
+
+	private static String getFileExtension(ClassNode cls) {
+		JadxArgs.OutputFormatEnum outputFormat = cls.root().getArgs().getOutputFormat();
+		switch (outputFormat) {
+			case JAVA:
+				return ".java";
+
+			case JSON:
+				return ".json";
+
+			default:
+				throw new JadxRuntimeException("Unknown output format: " + outputFormat);
+		}
 	}
 }

@@ -1,19 +1,19 @@
 package jadx.core.dex.nodes.parser;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import jadx.core.Consts;
 import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.attributes.annotations.Annotation;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.nodes.GenericInfo;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SignatureParser {
 
@@ -169,7 +169,7 @@ public class SignatureParser {
 			// generic type start ('<')
 			String obj = slice();
 			if (!incompleteType) {
-				obj += ";";
+				obj += ';';
 			}
 			ArgType[] genArr = consumeGenericArgs();
 			consume('>');
@@ -180,6 +180,9 @@ public class SignatureParser {
 				next();
 				// type parsing not completed, proceed to inner class
 				ArgType inner = consumeObjectType(true);
+				if (inner == null) {
+					throw new JadxRuntimeException("No inner type found: " + debugString());
+				}
 				return ArgType.genericInner(genericType, inner.getObject(), inner.getGenericTypes());
 			} else {
 				consume(';');
@@ -189,7 +192,7 @@ public class SignatureParser {
 	}
 
 	private ArgType[] consumeGenericArgs() {
-		List<ArgType> list = new LinkedList<ArgType>();
+		List<ArgType> list = new LinkedList<>();
 		ArgType type;
 		do {
 			if (lookAhead('*')) {
@@ -208,7 +211,7 @@ public class SignatureParser {
 				list.add(type);
 			}
 		} while (type != null && !lookAhead('>'));
-		return list.toArray(new ArgType[list.size()]);
+		return list.toArray(new ArgType[0]);
 	}
 
 	/**
@@ -216,11 +219,11 @@ public class SignatureParser {
 	 * <p/>
 	 * Example: "<T:Ljava/lang/Exception;:Ljava/lang/Object;>"
 	 */
-	public Map<ArgType, List<ArgType>> consumeGenericMap() {
+	public List<GenericInfo> consumeGenericMap() {
 		if (!lookAhead('<')) {
-			return Collections.emptyMap();
+			return Collections.emptyList();
 		}
-		Map<ArgType, List<ArgType>> map = new LinkedHashMap<ArgType, List<ArgType>>(2);
+		List<GenericInfo> list = new ArrayList<>();
 		consume('<');
 		while (true) {
 			if (lookAhead('>') || next() == STOP_CHAR) {
@@ -228,15 +231,15 @@ public class SignatureParser {
 			}
 			String id = consumeUntil(':');
 			if (id == null) {
-				LOG.error("Can't parse generic map: {}", sign);
-				return Collections.emptyMap();
+				LOG.error("Failed to parse generic map: {}", sign);
+				return Collections.emptyList();
 			}
 			tryConsume(':');
 			List<ArgType> types = consumeExtendsTypesList();
-			map.put(ArgType.genericType(id), types);
+			list.add(new GenericInfo(ArgType.genericType(id), types));
 		}
 		consume('>');
-		return map;
+		return list;
 	}
 
 	/**
@@ -251,7 +254,7 @@ public class SignatureParser {
 			ArgType argType = consumeType();
 			if (!argType.equals(ArgType.OBJECT)) {
 				if (types.isEmpty()) {
-					types = new LinkedList<ArgType>();
+					types = new LinkedList<>();
 				}
 				types.add(argType);
 			}
@@ -269,7 +272,7 @@ public class SignatureParser {
 			consume(')');
 			return Collections.emptyList();
 		}
-		List<ArgType> args = new LinkedList<ArgType>();
+		List<ArgType> args = new LinkedList<>();
 		do {
 			args.add(consumeType());
 		} while (!lookAhead(')'));
@@ -289,6 +292,9 @@ public class SignatureParser {
 	}
 
 	private String debugString() {
+		if (pos >= sign.length()) {
+			return sign;
+		}
 		return sign + " at position " + pos + " ('" + sign.charAt(pos) + "')";
 	}
 

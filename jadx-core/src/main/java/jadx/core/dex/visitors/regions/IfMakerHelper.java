@@ -1,5 +1,13 @@
 package jadx.core.dex.visitors.regions;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.LoopInfo;
@@ -16,13 +24,6 @@ import jadx.core.dex.regions.conditions.IfInfo;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import static jadx.core.dex.visitors.regions.RegionMaker.isEqualPaths;
 import static jadx.core.dex.visitors.regions.RegionMaker.isEqualReturnBlocks;
 import static jadx.core.utils.BlockUtils.getNextBlock;
@@ -35,7 +36,10 @@ public class IfMakerHelper {
 	}
 
 	static IfInfo makeIfInfo(BlockNode ifBlock) {
-		IfNode ifNode = (IfNode) ifBlock.getInstructions().get(0);
+		IfNode ifNode = (IfNode) BlockUtils.getLastInsn(ifBlock);
+		if (ifNode == null) {
+			throw new JadxRuntimeException("Empty IF block: " + ifBlock);
+		}
 		IfCondition condition = IfCondition.fromIfNode(ifNode);
 		IfInfo info = new IfInfo(condition, ifNode.getThenBlock(), ifNode.getElseBlock());
 		info.setIfBlock(ifBlock);
@@ -49,8 +53,14 @@ public class IfMakerHelper {
 	}
 
 	static IfInfo restructureIf(MethodNode mth, BlockNode block, IfInfo info) {
-		final BlockNode thenBlock = info.getThenBlock();
-		final BlockNode elseBlock = info.getElseBlock();
+		BlockNode thenBlock = info.getThenBlock();
+		BlockNode elseBlock = info.getElseBlock();
+
+		if (Objects.equals(thenBlock, elseBlock)) {
+			IfInfo ifInfo = new IfInfo(info, null, null);
+			ifInfo.setOutBlock(thenBlock);
+			return ifInfo;
+		}
 
 		// select 'then', 'else' and 'exit' blocks
 		if (thenBlock.contains(AFlag.RETURN) && elseBlock.contains(AFlag.RETURN)) {
@@ -256,7 +266,18 @@ public class IfMakerHelper {
 		result.setIfBlock(first.getIfBlock());
 		result.merge(first, second);
 
-		BlockNode otherPathBlock = followThenBranch ? first.getElseBlock() : first.getThenBlock();
+		BlockNode otherPathBlock;
+		if (followThenBranch) {
+			otherPathBlock = first.getElseBlock();
+			if (!otherPathBlock.equals(result.getElseBlock())) {
+				result.getSkipBlocks().add(otherPathBlock);
+			}
+		} else {
+			otherPathBlock = first.getThenBlock();
+			if (!otherPathBlock.equals(result.getThenBlock())) {
+				result.getSkipBlocks().add(otherPathBlock);
+			}
+		}
 		skipSimplePath(otherPathBlock, result.getSkipBlocks());
 		return result;
 	}
@@ -284,13 +305,13 @@ public class IfMakerHelper {
 		if (info.getMergedBlocks().size() > 1) {
 			for (BlockNode block : info.getMergedBlocks()) {
 				if (block != info.getIfBlock()) {
-					block.add(AFlag.SKIP);
+					block.add(AFlag.ADDED_TO_REGION);
 				}
 			}
 		}
 		if (!info.getSkipBlocks().isEmpty()) {
 			for (BlockNode block : info.getSkipBlocks()) {
-				block.add(AFlag.SKIP);
+				block.add(AFlag.ADDED_TO_REGION);
 			}
 			info.getSkipBlocks().clear();
 		}
@@ -318,11 +339,11 @@ public class IfMakerHelper {
 	}
 
 	private static BlockNode getNextIfNode(BlockNode block) {
-		if (block == null || block.contains(AType.LOOP) || block.contains(AFlag.SKIP)) {
+		if (block == null || block.contains(AType.LOOP) || block.contains(AFlag.ADDED_TO_REGION)) {
 			return null;
 		}
-		List<InsnNode> insns = block.getInstructions();
-		if (insns.size() == 1 && insns.get(0).getType() == InsnType.IF) {
+		InsnNode lastInsn = BlockUtils.getLastInsn(block);
+		if (lastInsn != null && lastInsn.getType() == InsnType.IF) {
 			return block;
 		}
 		// skip this block and search in successors chain
@@ -335,6 +356,7 @@ public class IfMakerHelper {
 		if (next.getPredecessors().size() != 1) {
 			return null;
 		}
+		List<InsnNode> insns = block.getInstructions();
 		boolean pass = true;
 		if (!insns.isEmpty()) {
 			// check that all instructions can be inlined

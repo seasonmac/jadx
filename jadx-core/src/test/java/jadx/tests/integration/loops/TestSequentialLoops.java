@@ -1,20 +1,20 @@
 package jadx.tests.integration.loops;
 
+import org.junit.jupiter.api.Test;
+
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
-
-import org.junit.Test;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
 import static jadx.tests.api.utils.JadxMatchers.countString;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestSequentialLoops extends IntegrationTest {
 
 	public static class TestCls {
-		public int test7(int a, int b) {
+		public int test(int a, int b) {
 			int c = b;
 			int z;
 

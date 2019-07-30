@@ -1,38 +1,68 @@
 package jadx.gui.utils.search;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
-public class SimpleIndex<T> extends SearchIndex<T> {
+import org.apache.commons.lang3.StringUtils;
 
-	private final List<String> keys = new ArrayList<String>();
-	private final List<T> values = new ArrayList<T>();
+import io.reactivex.BackpressureStrategy;
+import io.reactivex.Flowable;
+
+public class SimpleIndex<T> implements SearchIndex<T> {
+
+	private final List<String> keys = new ArrayList<>();
+	private final List<T> values = new ArrayList<>();
+
+	private final Object syncData = new Object();
 
 	@Override
 	public void put(String str, T value) {
-		keys.add(str);
-		values.add(value);
+		synchronized (syncData) {
+			keys.add(str);
+			values.add(value);
+		}
 	}
 
 	@Override
-	public List<T> getValuesForKeysContaining(String str) {
-		int size = size();
-		if (size == 0) {
-			return Collections.emptyList();
+	public void put(StringRef str, T value) {
+		throw new UnsupportedOperationException("StringRef not supported");
+	}
+
+	@Override
+	public boolean isStringRefSupported() {
+		return false;
+	}
+
+	private boolean isMatched(String str, String searchStr, boolean caseInsensitive) {
+		if (caseInsensitive) {
+			return StringUtils.containsIgnoreCase(str, searchStr);
+		} else {
+			return str.contains(searchStr);
 		}
-		List<T> results = new ArrayList<T>();
-		for (int i = 0; i < size; i++) {
-			String key = keys.get(i);
-			if (key.contains(str)) {
-				results.add(values.get(i));
+	}
+
+	@Override
+	public Flowable<T> search(final String searchStr, final boolean caseInsensitive) {
+		return Flowable.create(emitter -> {
+			synchronized (syncData) {
+				int size = keys.size();
+				for (int i = 0; i < size; i++) {
+					if (isMatched(keys.get(i), searchStr, caseInsensitive)) {
+						emitter.onNext(values.get(i));
+					}
+					if (emitter.isCancelled()) {
+						return;
+					}
+				}
 			}
-		}
-		return results;
+			emitter.onComplete();
+		}, BackpressureStrategy.LATEST);
 	}
 
 	@Override
 	public int size() {
-		return keys.size();
+		synchronized (syncData) {
+			return keys.size();
+		}
 	}
 }

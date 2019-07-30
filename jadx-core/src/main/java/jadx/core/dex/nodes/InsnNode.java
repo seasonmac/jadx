@@ -1,34 +1,29 @@
 package jadx.core.dex.nodes;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+
+import org.jetbrains.annotations.Nullable;
+
+import com.android.dx.io.instructions.DecodedInstruction;
+
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.InsnWrapArg;
-import jadx.core.dex.instructions.args.LiteralArg;
-import jadx.core.dex.instructions.args.NamedArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
 import jadx.core.utils.Utils;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-
-import com.android.dx.io.instructions.DecodedInstruction;
-import com.rits.cloning.Cloner;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class InsnNode extends LineAttrNode {
-
-	private static final Cloner INSN_CLONER = new Cloner();
-
-	static {
-		INSN_CLONER.dontClone(ArgType.class, SSAVar.class, LiteralArg.class, NamedArg.class);
-		INSN_CLONER.dontCloneInstanceOf(RegisterArg.class);
-	}
-
 	protected final InsnType insnType;
 
 	private RegisterArg result;
@@ -36,14 +31,13 @@ public class InsnNode extends LineAttrNode {
 	protected int offset;
 
 	public InsnNode(InsnType type, int argsCount) {
-		this.insnType = type;
-		this.offset = -1;
+		this(type, argsCount == 0 ? Collections.emptyList() : new ArrayList<>(argsCount));
+	}
 
-		if (argsCount == 0) {
-			this.arguments = Collections.emptyList();
-		} else {
-			this.arguments = new ArrayList<InsnArg>(argsCount);
-		}
+	public InsnNode(InsnType type, List<InsnArg> args) {
+		this.insnType = type;
+		this.arguments = args;
+		this.offset = -1;
 	}
 
 	public static InsnNode wrapArg(InsnArg arg) {
@@ -52,16 +46,36 @@ public class InsnNode extends LineAttrNode {
 		return insn;
 	}
 
-	public void setResult(RegisterArg res) {
+	public void setResult(@Nullable RegisterArg res) {
 		if (res != null) {
 			res.setParentInsn(this);
+			SSAVar ssaVar = res.getSVar();
+			if (ssaVar != null) {
+				ssaVar.setAssign(res);
+			}
 		}
 		this.result = res;
 	}
 
 	public void addArg(InsnArg arg) {
-		arg.setParentInsn(this);
 		arguments.add(arg);
+		attachArg(arg);
+	}
+
+	public void setArg(int n, InsnArg arg) {
+		arguments.set(n, arg);
+		attachArg(arg);
+	}
+
+	private void attachArg(InsnArg arg) {
+		arg.setParentInsn(this);
+		if (arg.isRegister()) {
+			RegisterArg reg = (RegisterArg) arg;
+			SSAVar ssaVar = reg.getSVar();
+			if (ssaVar != null) {
+				ssaVar.use(reg);
+			}
+		}
 	}
 
 	public InsnType getType() {
@@ -94,21 +108,15 @@ public class InsnNode extends LineAttrNode {
 		return false;
 	}
 
-	public void setArg(int n, InsnArg arg) {
-		arg.setParentInsn(this);
-		arguments.set(n, arg);
-	}
-
 	/**
 	 * Replace instruction arg with another using recursive search.
-	 * <br>
-	 * <b>Caution:</b> this method don't change usage information for replaced argument.
 	 */
 	public boolean replaceArg(InsnArg from, InsnArg to) {
 		int count = getArgsCount();
 		for (int i = 0; i < count; i++) {
 			InsnArg arg = arguments.get(i);
 			if (arg == from) {
+				InsnRemover.unbindArgUsage(null, arg);
 				setArg(i, to);
 				return true;
 			}
@@ -120,18 +128,29 @@ public class InsnNode extends LineAttrNode {
 	}
 
 	protected boolean removeArg(InsnArg arg) {
+		int index = getArgIndex(arg);
+		if (index == -1) {
+			return false;
+		}
+		removeArg(index);
+		return true;
+	}
+
+	protected InsnArg removeArg(int index) {
+		InsnArg arg = arguments.get(index);
+		arguments.remove(index);
+		InsnRemover.unbindArgUsage(null, arg);
+		return arg;
+	}
+
+	protected int getArgIndex(InsnArg arg) {
 		int count = getArgsCount();
 		for (int i = 0; i < count; i++) {
 			if (arg == arguments.get(i)) {
-				arguments.remove(i);
-				if (arg instanceof RegisterArg) {
-					RegisterArg reg = (RegisterArg) arg;
-					reg.getSVar().removeUse(reg);
-				}
-				return true;
+				return i;
 			}
 		}
-		return false;
+		return -1;
 	}
 
 	protected void addReg(DecodedInstruction insn, int i, ArgType type) {
@@ -181,6 +200,21 @@ public class InsnNode extends LineAttrNode {
 	}
 
 	public boolean canReorder() {
+		if (contains(AFlag.DONT_GENERATE)) {
+			if (getType() == InsnType.MONITOR_EXIT) {
+				return false;
+			}
+			return true;
+		}
+		for (InsnArg arg : getArguments()) {
+			if (arg.isInsnWrap()) {
+				InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
+				if (!wrapInsn.canReorder()) {
+					return false;
+				}
+			}
+		}
+
 		switch (getType()) {
 			case CONST:
 			case CONST_STR:
@@ -251,12 +285,14 @@ public class InsnNode extends LineAttrNode {
 		if (this == other) {
 			return true;
 		}
-		if (insnType != other.insnType
-				|| arguments.size() != other.arguments.size()) {
+		if (insnType != other.insnType) {
+			return false;
+		}
+		int size = arguments.size();
+		if (size != other.arguments.size()) {
 			return false;
 		}
 		// check wrapped instructions
-		int size = arguments.size();
 		for (int i = 0; i < size; i++) {
 			InsnArg arg = arguments.get(i);
 			InsnArg otherArg = other.arguments.get(i);
@@ -274,7 +310,19 @@ public class InsnNode extends LineAttrNode {
 		return true;
 	}
 
-	protected <T extends InsnNode> T copyCommonParams(T copy) {
+	/**
+	 * 'Hard' equals, compare all arguments
+	 */
+	public boolean isDeepEquals(InsnNode other) {
+		if (this == other) {
+			return true;
+		}
+		return isSame(other)
+				&& Objects.equals(result, other.result)
+				&& Objects.equals(arguments, other.arguments);
+	}
+
+	protected final <T extends InsnNode> T copyCommonParams(T copy) {
 		copy.setResult(result);
 		if (copy.getArgsCount() == 0) {
 			for (InsnArg arg : this.getArguments()) {
@@ -282,7 +330,7 @@ public class InsnNode extends LineAttrNode {
 					InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
 					copy.addArg(InsnArg.wrapArg(wrapInsn.copy()));
 				} else {
-					copy.addArg(arg);
+					copy.addArg(arg.duplicate());
 				}
 			}
 		}
@@ -296,9 +344,29 @@ public class InsnNode extends LineAttrNode {
 	 * Make copy of InsnNode object.
 	 */
 	public InsnNode copy() {
-		if (this.getClass() == InsnNode.class) {
-			return copyCommonParams(new InsnNode(insnType, getArgsCount()));
+		if (this.getClass() != InsnNode.class) {
+			throw new JadxRuntimeException("Copy method not implemented in insn class " + this.getClass().getSimpleName());
 		}
-		return INSN_CLONER.deepClone(this);
+		return copyCommonParams(new InsnNode(insnType, getArgsCount()));
+	}
+
+	public boolean canThrowException() {
+		switch (getType()) {
+			case RETURN:
+			case IF:
+			case GOTO:
+			case MOVE:
+			case MOVE_EXCEPTION:
+			case NEG:
+			case CONST:
+			case CONST_STR:
+			case CONST_CLASS:
+			case CMP_L:
+			case CMP_G:
+				return false;
+
+			default:
+				return true;
+		}
 	}
 }

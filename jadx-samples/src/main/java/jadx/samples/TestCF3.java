@@ -218,17 +218,17 @@ public class TestCF3 extends AbstractTest {
 		assertTrue(enabled);
 
 		assertTrue(testNestedLoops(
-				new ArrayList<String>(Arrays.asList("a1", "a2")),
-				new ArrayList<String>(Arrays.asList("a1", "b2"))));
+				new ArrayList<>(Arrays.asList("a1", "a2")),
+				new ArrayList<>(Arrays.asList("a1", "b2"))));
 
 		List<String> list1 = Arrays.asList(null, "a", "b");
 		assertEquals(testReturnInLoop(list1), "a");
 		assertEquals(testReturnInLoop2(list1), "a");
 
 		// TODO this line required to omit generic information because it create List<Object>
-//		List<String> list2 = Arrays.asList(null, null, null);
-//		assertEquals(testReturnInLoop(list2), "error");
-//		assertEquals(testReturnInLoop2(list2), "error");
+		// List<String> list2 = Arrays.asList(null, null, null);
+		// assertEquals(testReturnInLoop(list2), "error");
+		// assertEquals(testReturnInLoop2(list2), "error");
 
 		// assertTrue(testLabeledBreakContinue());
 
@@ -242,7 +242,7 @@ public class TestCF3 extends AbstractTest {
 		assertEquals(testComplexIfInLoop3(6), 6);
 		assertEquals(testComplexIfInLoop3(8), 24);
 
-		assertEquals(testLoops(new int[]{1, 2, 3, 4, 5, 6}, 2), 19);
+		assertEquals(testLoops(new int[] { 1, 2, 3, 4, 5, 6 }, 2), 19);
 
 		assertTrue(testInline() > 20);
 		assertTrue(testInline2());

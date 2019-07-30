@@ -1,14 +1,14 @@
 package jadx.core.dex.info;
 
-import jadx.core.codegen.TypeGen;
-import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.nodes.DexNode;
-import jadx.core.utils.Utils;
-
 import java.util.List;
 
 import com.android.dex.MethodId;
 import com.android.dex.ProtoId;
+
+import jadx.core.codegen.TypeGen;
+import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.nodes.DexNode;
+import jadx.core.utils.Utils;
 
 public final class MethodInfo {
 
@@ -33,18 +33,36 @@ public final class MethodInfo {
 		shortId = makeSignature(true);
 	}
 
+	private MethodInfo(ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
+		this.name = name;
+		this.alias = name;
+		this.aliasFromPreset = false;
+		this.declClass = declClass;
+		this.args = args;
+		this.retType = retType;
+		this.shortId = makeSignature(true);
+	}
+
+	public static MethodInfo externalMth(ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
+		return new MethodInfo(declClass, name, args, retType);
+	}
+
 	public static MethodInfo fromDex(DexNode dex, int mthIndex) {
-		MethodInfo mth = dex.getInfoStorage().getMethod(mthIndex);
+		MethodInfo mth = dex.root().getInfoStorage().getMethod(dex, mthIndex);
 		if (mth != null) {
 			return mth;
 		}
 		mth = new MethodInfo(dex, mthIndex);
-		return dex.getInfoStorage().putMethod(mthIndex, mth);
+		return dex.root().getInfoStorage().putMethod(dex, mthIndex, mth);
 	}
 
 	public String makeSignature(boolean includeRetType) {
+		return makeSignature(false, includeRetType);
+	}
+
+	public String makeSignature(boolean useAlias, boolean includeRetType) {
 		StringBuilder signature = new StringBuilder();
-		signature.append(name);
+		signature.append(useAlias ? alias : name);
 		signature.append('(');
 		for (ArgType arg : args) {
 			signature.append(TypeGen.signature(arg));
@@ -61,11 +79,15 @@ public final class MethodInfo {
 	}
 
 	public String getFullName() {
-		return declClass.getFullName() + "." + name;
+		return declClass.getFullName() + '.' + name;
 	}
 
 	public String getFullId() {
-		return declClass.getFullName() + "." + shortId;
+		return declClass.getFullName() + '.' + shortId;
+	}
+
+	public String getRawFullId() {
+		return declClass.makeRawFullName() + '.' + shortId;
 	}
 
 	/**
@@ -107,7 +129,7 @@ public final class MethodInfo {
 		this.alias = alias;
 	}
 
-	public boolean isRenamed() {
+	public boolean hasAlias() {
 		return !name.equals(alias);
 	}
 
@@ -143,8 +165,7 @@ public final class MethodInfo {
 
 	@Override
 	public String toString() {
-		return declClass.getFullName() + "." + name
-				+ "(" + Utils.listToString(args) + "):" + retType;
+		return declClass.getFullName() + '.' + name
+				+ '(' + Utils.listToString(args) + "):" + retType;
 	}
-
 }

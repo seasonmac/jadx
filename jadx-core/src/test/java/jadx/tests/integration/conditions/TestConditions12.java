@@ -1,14 +1,14 @@
 package jadx.tests.integration.conditions;
 
+import org.junit.jupiter.api.Test;
+
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
-
-import org.junit.Test;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestConditions12 extends IntegrationTest {
 
@@ -65,6 +65,5 @@ public class TestConditions12 extends IntegrationTest {
 		assertThat(code, containsOne("if (quality >= 30 && autoStop) {"));
 		assertThat(code, containsOne("if (!autoStop && lastValidRaw > -1 && quality < 10) {"));
 		assertThat(code, not(containsString("return")));
-
 	}
 }

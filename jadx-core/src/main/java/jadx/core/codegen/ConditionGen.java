@@ -1,5 +1,10 @@
 package jadx.core.codegen;
 
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Queue;
+
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.ArithNode;
 import jadx.core.dex.instructions.IfOp;
 import jadx.core.dex.instructions.InsnType;
@@ -15,18 +20,10 @@ import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.exceptions.CodegenException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.Queue;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class ConditionGen extends InsnGen {
-	private static final Logger LOG = LoggerFactory.getLogger(ConditionGen.class);
 
 	private static class CondStack {
-		private final Queue<IfCondition> stack = new LinkedList<IfCondition>();
+		private final Queue<IfCondition> stack = new LinkedList<>();
 
 		public Queue<IfCondition> getStack() {
 			return stack;
@@ -126,7 +123,7 @@ public class ConditionGen extends InsnGen {
 				wrap(code, firstArg);
 				return;
 			}
-			LOG.warn(ErrorsCounter.formatErrorMsg(mth, "Unsupported boolean condition " + op.getSymbol()));
+			ErrorsCounter.methodWarn(mth, "Unsupported boolean condition " + op.getSymbol());
 		}
 
 		addArg(code, firstArg, isArgWrapNeeded(firstArg));
@@ -159,7 +156,7 @@ public class ConditionGen extends InsnGen {
 	}
 
 	private boolean isWrapNeeded(IfCondition condition) {
-		if (condition.isCompare()) {
+		if (condition.isCompare() || condition.contains(AFlag.DONT_WRAP)) {
 			return false;
 		}
 		return condition.getMode() != Mode.NOT;
@@ -179,6 +176,9 @@ public class ConditionGen extends InsnGen {
 				case DIV:
 				case REM:
 					return false;
+
+				default:
+					return true;
 			}
 		} else {
 			switch (insnType) {
@@ -189,10 +189,10 @@ public class ConditionGen extends InsnGen {
 				case CONST:
 				case ARRAY_LENGTH:
 					return false;
+
 				default:
 					return true;
 			}
 		}
-		return true;
 	}
 }

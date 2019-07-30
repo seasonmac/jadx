@@ -1,31 +1,28 @@
 package jadx.core.dex.regions.conditions;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBranchRegion;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
+import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.regions.AbstractRegion;
-import jadx.core.utils.exceptions.JadxRuntimeException;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import jadx.core.utils.BlockUtils;
 
 public final class IfRegion extends AbstractRegion implements IBranchRegion {
 
-	private final BlockNode header;
+	private List<BlockNode> conditionBlocks;
 
 	private IfCondition condition;
 	private IContainer thenRegion;
 	private IContainer elseRegion;
 
-	public IfRegion(IRegion parent, BlockNode header) {
+	public IfRegion(IRegion parent) {
 		super(parent);
-		if (header.getInstructions().size() != 1) {
-			throw new JadxRuntimeException("Expected only one instruction in 'if' header");
-		}
-		this.header = header;
-		this.condition = IfCondition.fromIfBlock(header);
 	}
 
 	public IfCondition getCondition() {
@@ -52,8 +49,18 @@ public final class IfRegion extends AbstractRegion implements IBranchRegion {
 		this.elseRegion = elseRegion;
 	}
 
-	public BlockNode getHeader() {
-		return header;
+	public List<BlockNode> getConditionBlocks() {
+		return conditionBlocks;
+	}
+
+	public void setConditionBlocks(List<BlockNode> conditionBlocks) {
+		this.conditionBlocks = conditionBlocks;
+	}
+
+	public void setConditionBlocks(Set<BlockNode> conditionBlocks) {
+		List<BlockNode> list = new ArrayList<>(conditionBlocks);
+		Collections.sort(list);
+		this.conditionBlocks = list;
 	}
 
 	public boolean simplifyCondition() {
@@ -74,16 +81,22 @@ public final class IfRegion extends AbstractRegion implements IBranchRegion {
 	}
 
 	public int getSourceLine() {
-		if (header.getInstructions().isEmpty()) {
-			return 0;
+		for (BlockNode block : conditionBlocks) {
+			InsnNode lastInsn = BlockUtils.getLastInsn(block);
+			if (lastInsn != null) {
+				int sourceLine = lastInsn.getSourceLine();
+				if (sourceLine != 0) {
+					return sourceLine;
+				}
+			}
 		}
-		return header.getInstructions().get(0).getSourceLine();
+		return 0;
 	}
 
 	@Override
 	public List<IContainer> getSubBlocks() {
-		List<IContainer> all = new ArrayList<IContainer>(3);
-		all.add(header);
+		List<IContainer> all = new ArrayList<>(conditionBlocks.size() + 2);
+		all.addAll(conditionBlocks);
 		if (thenRegion != null) {
 			all.add(thenRegion);
 		}
@@ -95,7 +108,7 @@ public final class IfRegion extends AbstractRegion implements IBranchRegion {
 
 	@Override
 	public List<IContainer> getBranches() {
-		List<IContainer> branches = new ArrayList<IContainer>(2);
+		List<IContainer> branches = new ArrayList<>(2);
 		branches.add(thenRegion);
 		branches.add(elseRegion);
 		return Collections.unmodifiableList(branches);
@@ -105,10 +118,12 @@ public final class IfRegion extends AbstractRegion implements IBranchRegion {
 	public boolean replaceSubBlock(IContainer oldBlock, IContainer newBlock) {
 		if (oldBlock == thenRegion) {
 			thenRegion = newBlock;
+			updateParent(thenRegion, this);
 			return true;
 		}
 		if (oldBlock == elseRegion) {
 			elseRegion = newBlock;
+			updateParent(elseRegion, this);
 			return true;
 		}
 		return false;
@@ -128,6 +143,6 @@ public final class IfRegion extends AbstractRegion implements IBranchRegion {
 
 	@Override
 	public String toString() {
-		return "IF " + header + " then " + thenRegion + " else " + elseRegion;
+		return "IF " + conditionBlocks + " THEN: " + thenRegion + " ELSE: " + elseRegion;
 	}
 }

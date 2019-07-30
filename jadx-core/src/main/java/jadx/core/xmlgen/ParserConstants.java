@@ -5,6 +5,11 @@ import java.util.Map;
 
 public class ParserConstants {
 
+	protected ParserConstants() {
+	}
+
+	protected static final String ANDROID_NS_URL = "http://schemas.android.com/apk/res/android";
+
 	/**
 	 * Chunk types
 	 */
@@ -66,7 +71,7 @@ public class ParserConstants {
 	// ...end of integer flavors.
 	protected static final int TYPE_LAST_INT = 0x1f;
 
-	// Where the unit type information is.  This gives us 16 possible
+	// Where the unit type information is. This gives us 16 possible
 	// types, as defined below.
 	protected static final int COMPLEX_UNIT_SHIFT = 0;
 	protected static final int COMPLEX_UNIT_MASK = 0xf;
@@ -90,27 +95,27 @@ public class ParserConstants {
 	protected static final int COMPLEX_UNIT_FRACTION_PARENT = 1;
 
 	// Where the radix information is, telling where the decimal place
-	// appears in the mantissa.  This give us 4 possible fixed point
+	// appears in the mantissa. This give us 4 possible fixed point
 	// representations as defined below.
 	protected static final int COMPLEX_RADIX_SHIFT = 4;
 	protected static final int COMPLEX_RADIX_MASK = 0x3;
 
 	// The mantissa is an integral number -- i.e., 0xnnnnnn.0
-	protected static final int COMPLEX_RADIX_23p0 = 0;
+	protected static final int COMPLEX_RADIX_23P0 = 0;
 	// The mantissa magnitude is 16 bits -- i.e, 0xnnnn.nn
-	protected static final int COMPLEX_RADIX_16p7 = 1;
+	protected static final int COMPLEX_RADIX_16P7 = 1;
 	// The mantissa magnitude is 8 bits -- i.e, 0xnn.nnnn
-	protected static final int COMPLEX_RADIX_8p15 = 2;
+	protected static final int COMPLEX_RADIX_8P15 = 2;
 	// The mantissa magnitude is 0 bits -- i.e, 0x0.nnnnnn
-	protected static final int COMPLEX_RADIX_0p23 = 3;
+	protected static final int COMPLEX_RADIX_0P23 = 3;
 
-	// Where the actual value is.  This gives us 23 bits of
-	// precision.  The top bit is the sign.
+	// Where the actual value is. This gives us 23 bits of
+	// precision. The top bit is the sign.
 	protected static final int COMPLEX_MANTISSA_SHIFT = 8;
 	protected static final int COMPLEX_MANTISSA_MASK = 0xffffff;
 
 	protected static final double MANTISSA_MULT = 1.0f / (1 << COMPLEX_MANTISSA_SHIFT);
-	protected static final double[] RADIX_MULTS = new double[]{
+	protected static final double[] RADIX_MULTS = new double[] {
 			1.0f * MANTISSA_MULT,
 			1.0f / (1 << 7) * MANTISSA_MULT,
 			1.0f / (1 << 15) * MANTISSA_MULT,
@@ -133,38 +138,42 @@ public class ParserConstants {
 	protected static final int FLAG_COMPLEX = 0x0001;
 	// If set, this resource has been declared public, so libraries are allowed to reference it.
 	protected static final int FLAG_PUBLIC = 0x0002;
+	// If set, this is a weak resource and may be overriden by strong resources of the same name/type.
+	// This is only useful during linking with other resource tables.
+	protected static final int FLAG_WEAK = 0x0004;
 
 	/**
 	 * ResTable_map
 	 */
-	protected static final int ATTR_TYPE = ResMakeInternal(0);
+	protected static final int ATTR_TYPE = makeResInternal(0);
 	// For integral attributes, this is the minimum value it can hold.
-	protected static final int ATTR_MIN = ResMakeInternal(1);
+	protected static final int ATTR_MIN = makeResInternal(1);
 	// For integral attributes, this is the maximum value it can hold.
-	protected static final int ATTR_MAX = ResMakeInternal(2);
+	protected static final int ATTR_MAX = makeResInternal(2);
 	// Localization of this resource is can be encouraged or required with an aapt flag if this is set
-	protected static final int ATTR_L10N = ResMakeInternal(3);
+	protected static final int ATTR_L10N = makeResInternal(3);
 
 	// for plural support, see android.content.res.PluralRules#attrForQuantity(int)
-	protected static final int ATTR_OTHER = ResMakeInternal(4);
-	protected static final int ATTR_ZERO = ResMakeInternal(5);
-	protected static final int ATTR_ONE = ResMakeInternal(6);
-	protected static final int ATTR_TWO = ResMakeInternal(7);
-	protected static final int ATTR_FEW = ResMakeInternal(8);
-	protected static final int ATTR_MANY = ResMakeInternal(9);
+	protected static final int ATTR_OTHER = makeResInternal(4);
+	protected static final int ATTR_ZERO = makeResInternal(5);
+	protected static final int ATTR_ONE = makeResInternal(6);
+	protected static final int ATTR_TWO = makeResInternal(7);
+	protected static final int ATTR_FEW = makeResInternal(8);
+	protected static final int ATTR_MANY = makeResInternal(9);
 
-	protected static final Map<Integer, String> PLURALS_MAP = new HashMap<Integer, String>() {
-		{
-			put(ATTR_OTHER, "other");
-			put(ATTR_ZERO, "zero");
-			put(ATTR_ONE, "one");
-			put(ATTR_TWO, "two");
-			put(ATTR_FEW, "few");
-			put(ATTR_MANY, "many");
-		}
-	};
+	protected static final Map<Integer, String> PLURALS_MAP;
 
-	private static int ResMakeInternal(int entry) {
+	static {
+		PLURALS_MAP = new HashMap<>();
+		PLURALS_MAP.put(ATTR_OTHER, "other");
+		PLURALS_MAP.put(ATTR_ZERO, "zero");
+		PLURALS_MAP.put(ATTR_ONE, "one");
+		PLURALS_MAP.put(ATTR_TWO, "two");
+		PLURALS_MAP.put(ATTR_FEW, "few");
+		PLURALS_MAP.put(ATTR_MANY, "many");
+	}
+
+	private static int makeResInternal(int entry) {
 		return 0x01000000 | entry & 0xFFFF;
 	}
 
@@ -178,7 +187,7 @@ public class ParserConstants {
 	protected static final int ATTR_TYPE_REFERENCE = 1;
 	// Attribute holds a generic string.
 	protected static final int ATTR_TYPE_STRING = 1 << 1;
-	// Attribute holds an integer value.  ATTR_MIN and ATTR_MIN can
+	// Attribute holds an integer value. ATTR_MIN and ATTR_MIN can
 	// optionally specify a constrained range of possible integer values.
 	protected static final int ATTR_TYPE_INTEGER = 1 << 2;
 	// Attribute holds a boolean integer.
@@ -191,15 +200,14 @@ public class ParserConstants {
 	protected static final int ATTR_TYPE_DIMENSION = 1 << 6;
 	// Attribute holds a fraction value, such as "20%".
 	protected static final int ATTR_TYPE_FRACTION = 1 << 7;
-	// Attribute holds an enumeration.  The enumeration values are
+	// Attribute holds an enumeration. The enumeration values are
 	// supplied as additional entries in the map.
 	protected static final int ATTR_TYPE_ENUM = 1 << 16;
-	// Attribute holds a bitmaks of flags.  The flag bit values are
+	// Attribute holds a bitmaks of flags. The flag bit values are
 	// supplied as additional entries in the map.
 	protected static final int ATTR_TYPE_FLAGS = 1 << 17;
 
 	// Enum of localization modes, for use with ATTR_L10N
 	protected static final int ATTR_L10N_NOT_REQUIRED = 0;
 	protected static final int ATTR_L10N_SUGGESTED = 1;
-
 }

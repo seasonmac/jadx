@@ -1,21 +1,40 @@
 language: java
-jdk:
-    - oraclejdk8
-    - oraclejdk7
-    - openjdk6
+sudo: false
+dist: trusty
+
+# don't build on tag push
+if: tag IS blank
+
+git:
+  depth: false
 
 before_install:
-    - chmod +x gradlew
+  - chmod +x gradlew
 
-script:
-    - TERM=dumb ./gradlew clean build dist
+# override install to skip 'gradle assemble'
+install: true
 
-after_success:
-    - TERM=dumb ./gradlew jacocoTestReport
-    - bash <(curl -s https://codecov.io/bash) || echo "Codecov did not collect coverage reports"
+env:
+  global:
+    - TERM=dumb
+    - JADX_LAST_TAG=$(git describe --abbrev=0 --tags)
+    - JADX_VERSION="${JADX_LAST_TAG:1}-b$TRAVIS_BUILD_NUMBER-$(git rev-parse --short HEAD)"
 
-sudo: false
+jdk:
+  - openjdk8
+  - oraclejdk8
+  - openjdk11
 
-notifications:
-    email:
-        - skylot@gmail.com
+script: ./gradlew clean build
+
+jobs:
+  include:
+    - stage: deploy-unstable
+      jdk: openjdk8
+      if: branch = master AND repo = env(MAIN_REPO) AND type = push
+      script: bash scripts/travis-master.sh
+
+    - stage: deploy-release
+      jdk: openjdk8
+      if: branch = release AND repo = env(MAIN_REPO) AND type = push
+      script: bash scripts/travis-release.sh

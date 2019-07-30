@@ -1,5 +1,12 @@
 package jadx.core.dex.visitors.ssa;
 
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.Deque;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
@@ -15,17 +22,9 @@ import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.blocksmaker.BlockFinish;
 import jadx.core.utils.InsnList;
-import jadx.core.utils.InstructionRemover;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
-import java.util.Deque;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
 
 @JadxVisitor(
 		name = "SSATransform",
@@ -43,6 +42,10 @@ public class SSATransform extends AbstractVisitor {
 	}
 
 	private static void process(MethodNode mth) {
+		if (!mth.getSVars().isEmpty()) {
+			return;
+		}
+
 		LiveVarAnalysis la = new LiveVarAnalysis(mth);
 		la.runAnalysis();
 		int regsCount = mth.getRegsCount();
@@ -53,6 +56,7 @@ public class SSATransform extends AbstractVisitor {
 
 		fixLastAssignInTry(mth);
 		removeBlockerInsns(mth);
+		markThisArgs(mth.getThisArg());
 
 		boolean repeatFix;
 		int k = 0;
@@ -62,6 +66,8 @@ public class SSATransform extends AbstractVisitor {
 				throw new JadxRuntimeException("Phi nodes fix limit reached!");
 			}
 		} while (repeatFix);
+
+		hidePhiInsns(mth);
 	}
 
 	private static void placePhi(MethodNode mth, int regNum, LiveVarAnalysis la) {
@@ -69,7 +75,7 @@ public class SSATransform extends AbstractVisitor {
 		int blocksCount = blocks.size();
 		BitSet hasPhi = new BitSet(blocksCount);
 		BitSet processed = new BitSet(blocksCount);
-		Deque<BlockNode> workList = new LinkedList<BlockNode>();
+		Deque<BlockNode> workList = new LinkedList<>();
 
 		BitSet assignBlocks = la.getAssignBlocks(regNum);
 		for (int id = assignBlocks.nextSetBit(0); id >= 0; id = assignBlocks.nextSetBit(id + 1)) {
@@ -116,45 +122,31 @@ public class SSATransform extends AbstractVisitor {
 	}
 
 	private static void renameVariables(MethodNode mth) {
-		if (!mth.getSVars().isEmpty()) {
-			throw new JadxRuntimeException("SSA rename variables already executed");
-		}
-		int regsCount = mth.getRegsCount();
-		SSAVar[] vars = new SSAVar[regsCount];
-		int[] versions = new int[regsCount];
-		// init method arguments
-		for (RegisterArg arg : mth.getArguments(true)) {
-			int regNum = arg.getRegNum();
-			vars[regNum] = newSSAVar(mth, versions, arg, regNum);
-		}
-		BlockNode enterBlock = mth.getEnterBlock();
-		initPhiInEnterBlock(vars, enterBlock);
-		renameVar(mth, vars, versions, enterBlock);
-	}
+		RenameState initState = RenameState.init(mth);
+		initPhiInEnterBlock(initState);
 
-	private static SSAVar newSSAVar(MethodNode mth, int[] versions, RegisterArg arg, int regNum) {
-		int version = versions[regNum]++;
-		return mth.makeNewSVar(regNum, version, arg);
-	}
-
-	private static void initPhiInEnterBlock(SSAVar[] vars, BlockNode enterBlock) {
-		PhiListAttr phiList = enterBlock.get(AType.PHI_LIST);
-		if (phiList != null) {
-			for (PhiInsn phiInsn : phiList.getList()) {
-				int regNum = phiInsn.getResult().getRegNum();
-				SSAVar var = vars[regNum];
-				if (var == null) {
-					continue;
-				}
-				RegisterArg arg = phiInsn.bindArg(enterBlock);
-				var.use(arg);
-				var.setUsedInPhi(phiInsn);
+		Deque<RenameState> stack = new LinkedList<>();
+		stack.push(initState);
+		while (!stack.isEmpty()) {
+			RenameState state = stack.pop();
+			renameVarsInBlock(state);
+			for (BlockNode dominated : state.getBlock().getDominatesOn()) {
+				stack.push(RenameState.copyFrom(state, dominated));
 			}
 		}
 	}
 
-	private static void renameVar(MethodNode mth, SSAVar[] vars, int[] vers, BlockNode block) {
-		SSAVar[] inputVars = Arrays.copyOf(vars, vars.length);
+	private static void initPhiInEnterBlock(RenameState initState) {
+		PhiListAttr phiList = initState.getBlock().get(AType.PHI_LIST);
+		if (phiList != null) {
+			for (PhiInsn phiInsn : phiList.getList()) {
+				bindPhiArg(initState, phiInsn);
+			}
+		}
+	}
+
+	private static void renameVarsInBlock(RenameState state) {
+		BlockNode block = state.getBlock();
 		for (InsnNode insn : block.getInstructions()) {
 			if (insn.getType() != InsnType.PHI) {
 				for (InsnArg arg : insn.getArguments()) {
@@ -163,18 +155,17 @@ public class SSATransform extends AbstractVisitor {
 					}
 					RegisterArg reg = (RegisterArg) arg;
 					int regNum = reg.getRegNum();
-					SSAVar var = vars[regNum];
+					SSAVar var = state.getVar(regNum);
 					if (var == null) {
 						throw new JadxRuntimeException("Not initialized variable reg: " + regNum
-								+ ", insn: " + insn + ", block:" + block + ", method: " + mth);
+								+ ", insn: " + insn + ", block:" + block);
 					}
 					var.use(reg);
 				}
 			}
 			RegisterArg result = insn.getResult();
 			if (result != null) {
-				int regNum = result.getRegNum();
-				vars[regNum] = newSSAVar(mth, vers, result, regNum);
+				state.startVar(result);
 			}
 		}
 		for (BlockNode s : block.getSuccessors()) {
@@ -183,20 +174,20 @@ public class SSATransform extends AbstractVisitor {
 				continue;
 			}
 			for (PhiInsn phiInsn : phiList.getList()) {
-				int regNum = phiInsn.getResult().getRegNum();
-				SSAVar var = vars[regNum];
-				if (var == null) {
-					continue;
-				}
-				RegisterArg arg = phiInsn.bindArg(block);
-				var.use(arg);
-				var.setUsedInPhi(phiInsn);
+				bindPhiArg(state, phiInsn);
 			}
 		}
-		for (BlockNode domOn : block.getDominatesOn()) {
-			renameVar(mth, vars, vers, domOn);
+	}
+
+	private static void bindPhiArg(RenameState state, PhiInsn phiInsn) {
+		int regNum = phiInsn.getResult().getRegNum();
+		SSAVar var = state.getVar(regNum);
+		if (var == null) {
+			return;
 		}
-		System.arraycopy(inputVars, 0, vars, 0, vars.length);
+		RegisterArg arg = phiInsn.bindArg(state.getBlock());
+		var.use(arg);
+		var.addUsedInPhi(phiInsn);
 	}
 
 	/**
@@ -221,11 +212,10 @@ public class SSATransform extends AbstractVisitor {
 			InsnNode parentInsn = arg.getAssignInsn();
 			if (parentInsn != null
 					&& parentInsn.getResult() != null
-					&& parentInsn.contains(AFlag.TRY_LEAVE)) {
-				if (phi.removeArg(arg)) {
-					argsCount--;
-					continue;
-				}
+					&& parentInsn.contains(AFlag.TRY_LEAVE)
+					&& phi.removeArg(arg) /* TODO: fix registers removing */) {
+				argsCount--;
+				continue;
 			}
 			k++;
 		}
@@ -245,7 +235,7 @@ public class SSATransform extends AbstractVisitor {
 					InsnNode parentInsn = arg.getAssignInsn();
 					if (parentInsn != null && parentInsn.contains(AFlag.REMOVE)) {
 						phi.removeArg(arg);
-						InstructionRemover.remove(mth, block, parentInsn);
+						InsnRemover.remove(mth, block, parentInsn);
 						removed = true;
 					}
 				}
@@ -256,7 +246,7 @@ public class SSATransform extends AbstractVisitor {
 
 	private static boolean fixUselessPhi(MethodNode mth) {
 		boolean changed = false;
-		List<PhiInsn> insnToRemove = new ArrayList<PhiInsn>();
+		List<PhiInsn> insnToRemove = new ArrayList<>();
 		for (SSAVar var : mth.getSVars()) {
 			// phi result not used
 			if (var.getUseCount() == 0) {
@@ -293,7 +283,7 @@ public class SSATransform extends AbstractVisitor {
 					phi.removeArg(useArg);
 				}
 			}
-			InstructionRemover.remove(mth, block, phi);
+			InsnRemover.remove(mth, block, phi);
 			return true;
 		}
 		boolean allSame = phi.getArgsCount() == 1 || isSameArgs(phi);
@@ -333,10 +323,10 @@ public class SSATransform extends AbstractVisitor {
 						}
 						SSAVar sVar = ((RegisterArg) arg).getSVar();
 						if (sVar != null) {
-							sVar.setUsedInPhi(null);
+							sVar.removeUsedInPhi(phiInsn);
 						}
 					}
-					InstructionRemover.remove(mth, block, phiInsn);
+					InsnRemover.remove(mth, block, phiInsn);
 				}
 			}
 			if (list.isEmpty()) {
@@ -357,13 +347,13 @@ public class SSATransform extends AbstractVisitor {
 		SSAVar argVar = arg.getSVar();
 		if (argVar != null) {
 			argVar.removeUse(arg);
-			argVar.setUsedInPhi(null);
+			argVar.removeUsedInPhi(phi);
 		}
 		// try inline
 		if (inlinePhiInsn(mth, block, phi)) {
 			insns.remove(phiIndex);
 		} else {
-			assign.setUsedInPhi(null);
+			assign.removeUsedInPhi(phi);
 
 			InsnNode m = new InsnNode(InsnType.MOVE, 1);
 			m.add(AFlag.SYNTHETIC);
@@ -385,7 +375,7 @@ public class SSATransform extends AbstractVisitor {
 			return false;
 		}
 		List<RegisterArg> useList = resVar.getUseList();
-		for (RegisterArg useArg : new ArrayList<RegisterArg>(useList)) {
+		for (RegisterArg useArg : new ArrayList<>(useList)) {
 			InsnNode useInsn = useArg.getParentInsn();
 			if (useInsn == null || useInsn == phi) {
 				return false;
@@ -406,7 +396,39 @@ public class SSATransform extends AbstractVisitor {
 				assignInsn.add(AFlag.DONT_INLINE);
 			}
 		}
-		InstructionRemover.unbindInsn(mth, phi);
+		InsnRemover.unbindInsn(mth, phi);
 		return true;
+	}
+
+	private static void markThisArgs(RegisterArg thisArg) {
+		if (thisArg != null) {
+			markOneArgAsThis(thisArg);
+			thisArg.getSVar().getUseList().forEach(SSATransform::markOneArgAsThis);
+		}
+	}
+
+	private static void markOneArgAsThis(RegisterArg arg) {
+		if (arg == null) {
+			return;
+		}
+		arg.add(AFlag.THIS);
+		// mark all moved 'this'
+		InsnNode parentInsn = arg.getParentInsn();
+		if (parentInsn != null
+				&& parentInsn.getType() == InsnType.MOVE
+				&& parentInsn.getArg(0) == arg) {
+			RegisterArg resArg = parentInsn.getResult();
+			if (resArg.getRegNum() != arg.getRegNum()
+					&& !resArg.getSVar().isUsedInPhi()) {
+				markThisArgs(resArg);
+				parentInsn.add(AFlag.DONT_GENERATE);
+			}
+		}
+	}
+
+	private static void hidePhiInsns(MethodNode mth) {
+		for (BlockNode block : mth.getBasicBlocks()) {
+			block.getInstructions().removeIf(insn -> insn.getType() == InsnType.PHI);
+		}
 	}
 }

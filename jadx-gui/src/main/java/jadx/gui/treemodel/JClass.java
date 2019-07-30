@@ -1,32 +1,33 @@
 package jadx.gui.treemodel;
 
+import javax.swing.*;
+
+import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.jetbrains.annotations.Nullable;
+
+import jadx.api.ICodeInfo;
 import jadx.api.JavaClass;
 import jadx.api.JavaField;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
-import javax.swing.Icon;
-import javax.swing.ImageIcon;
-
-import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
-
-public class JClass extends JNode {
+public class JClass extends JLoadableNode {
 	private static final long serialVersionUID = -1239986875244097177L;
 
-	private static final ImageIcon ICON_CLASS = Utils.openIcon("class_obj");
-	private static final ImageIcon ICON_CLASS_DEFAULT = Utils.openIcon("class_default_obj");
-	private static final ImageIcon ICON_CLASS_PRIVATE = Utils.openIcon("innerclass_private_obj");
-	private static final ImageIcon ICON_CLASS_PROTECTED = Utils.openIcon("innerclass_protected_obj");
-	private static final ImageIcon ICON_INTERFACE = Utils.openIcon("int_obj");
-	private static final ImageIcon ICON_ENUM = Utils.openIcon("enum_obj");
-	private static final ImageIcon ICON_ANNOTATION = Utils.openIcon("annotation_obj");
+	private static final ImageIcon ICON_CLASS = UiUtils.openIcon("class_obj");
+	private static final ImageIcon ICON_CLASS_DEFAULT = UiUtils.openIcon("class_default_obj");
+	private static final ImageIcon ICON_CLASS_PRIVATE = UiUtils.openIcon("innerclass_private_obj");
+	private static final ImageIcon ICON_CLASS_PROTECTED = UiUtils.openIcon("innerclass_protected_obj");
+	private static final ImageIcon ICON_INTERFACE = UiUtils.openIcon("int_obj");
+	private static final ImageIcon ICON_ENUM = UiUtils.openIcon("enum_obj");
+	private static final ImageIcon ICON_ANNOTATION = UiUtils.openIcon("annotation_obj");
 
-	private final JavaClass cls;
-	private final JClass jParent;
-	private boolean loaded;
+	private final transient JavaClass cls;
+	private final transient JClass jParent;
+	private transient boolean loaded;
 
 	public JClass(JavaClass cls) {
 		this.cls = cls;
@@ -44,9 +45,15 @@ public class JClass extends JNode {
 		return cls;
 	}
 
+	@Override
+	public void loadNode() {
+		getRootClass().load();
+	}
+
 	public synchronized void load() {
 		if (!loaded) {
 			cls.decompile();
+			cls.unload();
 			loaded = true;
 		}
 		update();
@@ -71,8 +78,20 @@ public class JClass extends JNode {
 		}
 	}
 
+	@Override
+	public @Nullable ICodeInfo getCodeInfo() {
+		load();
+		return cls.getClassNode().getCode();
+	}
+
+	@Override
 	public String getContent() {
 		return cls.getCode();
+	}
+
+	@Override
+	public String getSmali() {
+		return cls.getSmali();
 	}
 
 	@Override
@@ -134,11 +153,6 @@ public class JClass extends JNode {
 	@Override
 	public int getLine() {
 		return cls.getDecompiledLine();
-	}
-
-	@Override
-	public Integer getSourceLine(int line) {
-		return cls.getSourceLine(line);
 	}
 
 	@Override

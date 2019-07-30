@@ -85,7 +85,7 @@ public class TestEnum extends AbstractTest {
 		OBJECT, ARRAY;
 
 		private static Set<Types> primitives = EnumSet.of(INT, FLOAT, LONG, DOUBLE);
-		public static List<Types> references = new ArrayList<Types>();
+		public static List<Types> references = new ArrayList<>();
 
 		static {
 			references.add(OBJECT);
@@ -97,6 +97,7 @@ public class TestEnum extends AbstractTest {
 		}
 	}
 
+	@SuppressWarnings("NoWhitespaceBefore")
 	public enum EmptyEnum {
 		;
 

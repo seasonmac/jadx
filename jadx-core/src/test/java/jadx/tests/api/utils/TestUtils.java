@@ -1,16 +1,24 @@
 package jadx.tests.api.utils;
 
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import jadx.NotYetImplementedExtension;
 import jadx.core.codegen.CodeWriter;
 
+@ExtendWith(NotYetImplementedExtension.class)
 public class TestUtils {
+
+	public static String indent() {
+		return CodeWriter.INDENT_STR;
+	}
 
 	public static String indent(int indent) {
 		if (indent == 1) {
-			return CodeWriter.INDENT;
+			return CodeWriter.INDENT_STR;
 		}
-		StringBuilder sb = new StringBuilder(indent * CodeWriter.INDENT.length());
+		StringBuilder sb = new StringBuilder(indent * CodeWriter.INDENT_STR.length());
 		for (int i = 0; i < indent; i++) {
-			sb.append(CodeWriter.INDENT);
+			sb.append(CodeWriter.INDENT_STR);
 		}
 		return sb.toString();
 	}
@@ -24,5 +32,4 @@ public class TestUtils {
 		}
 		return count;
 	}
-
 }

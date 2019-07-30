@@ -1,10 +1,12 @@
 package jadx.core.dex.info;
 
+import java.util.Objects;
+
+import com.android.dex.FieldId;
+
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.DexNode;
-
-import com.android.dex.FieldId;
 
 public final class FieldInfo {
 
@@ -22,7 +24,7 @@ public final class FieldInfo {
 
 	public static FieldInfo from(DexNode dex, ClassInfo declClass, String name, ArgType type) {
 		FieldInfo field = new FieldInfo(declClass, name, type);
-		return dex.getInfoStorage().getField(field);
+		return dex.root().getInfoStorage().getField(field);
 	}
 
 	public static FieldInfo fromDex(DexNode dex, int index) {
@@ -53,12 +55,24 @@ public final class FieldInfo {
 		this.alias = alias;
 	}
 
+	public boolean hasAlias() {
+		return !Objects.equals(name, alias);
+	}
+
 	public String getFullId() {
-		return declClass.getFullName() + "." + name + ":" + TypeGen.signature(type);
+		return declClass.getFullName() + '.' + name + ':' + TypeGen.signature(type);
+	}
+
+	public String getRawFullId() {
+		return declClass.makeRawFullName() + '.' + name + ':' + TypeGen.signature(type);
 	}
 
 	public boolean isRenamed() {
 		return !name.equals(alias);
+	}
+
+	public boolean equalsNameAndType(FieldInfo other) {
+		return name.equals(other.name) && type.equals(other.type);
 	}
 
 	@Override
@@ -85,6 +99,6 @@ public final class FieldInfo {
 
 	@Override
 	public String toString() {
-		return declClass + "." + name + " " + type;
+		return declClass + "." + name + ' ' + type;
 	}
 }

@@ -1,8 +1,9 @@
 package jadx.api;
 
-import jadx.core.xmlgen.ResContainer;
-
 import java.io.File;
+
+import jadx.core.utils.files.ZipSecurity;
+import jadx.core.xmlgen.ResContainer;
 
 public class ResourceFile {
 
@@ -34,7 +35,14 @@ public class ResourceFile {
 	private final ResourceType type;
 	private ZipRef zipRef;
 
-	ResourceFile(JadxDecompiler decompiler, String name, ResourceType type) {
+	public static ResourceFile createResourceFile(JadxDecompiler decompiler, String name, ResourceType type) {
+		if (!ZipSecurity.isValidZipEntryName(name)) {
+			return null;
+		}
+		return new ResourceFile(decompiler, name, type);
+	}
+
+	protected ResourceFile(JadxDecompiler decompiler, String name, ResourceType type) {
 		this.decompiler = decompiler;
 		this.name = name;
 		this.type = type;
@@ -56,12 +64,12 @@ public class ResourceFile {
 		this.zipRef = zipRef;
 	}
 
-	ZipRef getZipRef() {
+	public ZipRef getZipRef() {
 		return zipRef;
 	}
 
 	@Override
 	public String toString() {
-		return "ResourceFile{name='" + name + '\'' + ", type=" + type + "}";
+		return "ResourceFile{name='" + name + '\'' + ", type=" + type + '}';
 	}
 }

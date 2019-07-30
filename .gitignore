@@ -9,14 +9,20 @@ out/
 *.iml
 *.ipr
 *.iws
+.attach_pid*
+*.hprof
+
+**/.DS_Store
 
 bin/
 target/
 build/
+classes/
 idea/
 .gradle/
-gradle.properties
+node_modules/
 
+jadx-output/
 *-tmp/
 
 *.dex
@@ -24,4 +30,4 @@ gradle.properties
 *.dump
 *.log
 *.cfg
-
+*.orig

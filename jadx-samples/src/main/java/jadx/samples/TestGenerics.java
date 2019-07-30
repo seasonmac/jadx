@@ -13,7 +13,7 @@ public class TestGenerics extends AbstractTest {
 	public Class<?>[] classes;
 
 	public interface MyComparable<T> {
-		public int compareTo(T o);
+		int compareTo(T o);
 	}
 
 	public static class GenericClass implements MyComparable<String> {
@@ -35,12 +35,13 @@ public class TestGenerics extends AbstractTest {
 		}
 	}
 
-	public static Box<Integer> integerBox = new Box<Integer>();
+	public static Box<Integer> integerBox = new Box<>();
 
+	@SuppressWarnings("InterfaceTypeParameterName")
 	public interface Pair<K, LongGenericType> {
-		public K getKey();
+		K getKey();
 
-		public LongGenericType getValue();
+		LongGenericType getValue();
 	}
 
 	public static class OrderedPair<K, V> implements Pair<K, V> {
@@ -63,20 +64,20 @@ public class TestGenerics extends AbstractTest {
 		}
 	}
 
-	Pair<String, Integer> p1 = new OrderedPair<String, Integer>("8", 8);
-	OrderedPair<String, Box<Integer>> p = new OrderedPair<String, Box<Integer>>("primes", new Box<Integer>());
+	Pair<String, Integer> p1 = new OrderedPair<>("8", 8);
+	OrderedPair<String, Box<Integer>> p = new OrderedPair<>("primes", new Box<Integer>());
 
 	public static class Util {
 		// Generic static method
 		public static <K, V> boolean compare(Pair<K, V> p1, Pair<K, V> p2) {
-			return p1.getKey().equals(p2.getKey()) &&
-					p1.getValue().equals(p2.getValue());
+			return p1.getKey().equals(p2.getKey())
+					&& p1.getValue().equals(p2.getValue());
 		}
 	}
 
 	public static boolean use() {
-		Pair<Integer, String> p1 = new OrderedPair<Integer, String>(1, "str1");
-		Pair<Integer, String> p2 = new OrderedPair<Integer, String>(2, "str2");
+		Pair<Integer, String> p1 = new OrderedPair<>(1, "str1");
+		Pair<Integer, String> p2 = new OrderedPair<>(2, "str2");
 		boolean same = Util.<Integer, String>compare(p1, p2);
 		return same;
 	}
@@ -133,7 +134,7 @@ public class TestGenerics extends AbstractTest {
 
 	public class Node<T extends Comparable<T>> {
 		private final T data;
-		private final Node<T> next;
+		public final Node<T> next;
 
 		public Node(T data, Node<T> next) {
 			this.data = data;
@@ -145,8 +146,8 @@ public class TestGenerics extends AbstractTest {
 		}
 	}
 
-	private class TestConstructor implements Enumeration<String> {
-		private final TestGenerics a;
+	public class TestConstructor implements Enumeration<String> {
+		public final TestGenerics a;
 
 		TestConstructor(TestGenerics a) {
 			this.a = a;
@@ -168,7 +169,7 @@ public class TestGenerics extends AbstractTest {
 	}
 
 	private List<String> test1(Map<String, String> map) {
-		List<String> list = new ArrayList<String>();
+		List<String> list = new ArrayList<>();
 		String str = map.get("key");
 		list.add(str);
 		return list;

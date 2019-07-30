@@ -4,7 +4,6 @@ import jadx.core.codegen.CodeWriter;
 import jadx.core.xmlgen.ResContainer;
 
 public class ResourceFileContent extends ResourceFile {
-
 	private final CodeWriter content;
 
 	public ResourceFileContent(String name, ResourceType type, CodeWriter content) {
@@ -14,6 +13,6 @@ public class ResourceFileContent extends ResourceFile {
 
 	@Override
 	public ResContainer loadContent() {
-		return ResContainer.singleFile(getName(), content);
+		return ResContainer.textResource(getName(), content);
 	}
 }

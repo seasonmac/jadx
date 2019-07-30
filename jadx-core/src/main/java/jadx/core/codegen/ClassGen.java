@@ -1,12 +1,22 @@
 package jadx.core.codegen;
 
-import jadx.api.IJadxArgs;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import com.android.dx.rop.code.AccessFlags;
+
+import jadx.api.JadxArgs;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.AttrNode;
 import jadx.core.dex.attributes.nodes.EnumClassAttr;
 import jadx.core.dex.attributes.nodes.EnumClassAttr.EnumField;
-import jadx.core.dex.attributes.nodes.SourceFileAttr;
+import jadx.core.dex.attributes.nodes.JadxError;
+import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.instructions.args.ArgType;
@@ -15,60 +25,42 @@ import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
+import jadx.core.dex.nodes.GenericInfo;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.parser.FieldInitAttr;
 import jadx.core.dex.nodes.parser.FieldInitAttr.InitType;
+import jadx.core.utils.CodeGenUtils;
 import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.CodegenException;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.android.dx.rop.code.AccessFlags;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class ClassGen {
-	private static final Logger LOG = LoggerFactory.getLogger(ClassGen.class);
-
-	public static final Comparator<MethodNode> METHOD_LINE_COMPARATOR = new Comparator<MethodNode>() {
-		@Override
-		public int compare(MethodNode a, MethodNode b) {
-			return Utils.compare(a.getSourceLine(), b.getSourceLine());
-		}
-	};
 
 	private final ClassNode cls;
 	private final ClassGen parentGen;
 	private final AnnotationGen annotationGen;
 	private final boolean fallback;
+	private final boolean useImports;
 	private final boolean showInconsistentCode;
 
-	private final Set<ClassInfo> imports = new HashSet<ClassInfo>();
+	private final Set<ClassInfo> imports = new HashSet<>();
 	private int clsDeclLine;
 
-	public ClassGen(ClassNode cls, IJadxArgs jadxArgs) {
-		this(cls, null, jadxArgs.isFallbackMode(), jadxArgs.isShowInconsistentCode());
+	public ClassGen(ClassNode cls, JadxArgs jadxArgs) {
+		this(cls, null, jadxArgs.isUseImports(), jadxArgs.isFallbackMode(), jadxArgs.isShowInconsistentCode());
 	}
 
 	public ClassGen(ClassNode cls, ClassGen parentClsGen) {
-		this(cls, parentClsGen, parentClsGen.fallback, parentClsGen.showInconsistentCode);
+		this(cls, parentClsGen, parentClsGen.useImports, parentClsGen.fallback, parentClsGen.showInconsistentCode);
 	}
 
-	public ClassGen(ClassNode cls, ClassGen parentClsGen, boolean fallback, boolean showBadCode) {
+	public ClassGen(ClassNode cls, ClassGen parentClsGen, boolean useImports, boolean fallback, boolean showBadCode) {
 		this.cls = cls;
 		this.parentGen = parentClsGen;
 		this.fallback = fallback;
+		this.useImports = useImports;
 		this.showInconsistentCode = showBadCode;
 
 		this.annotationGen = new AnnotationGen(cls, this);
@@ -89,31 +81,30 @@ public class ClassGen {
 		}
 		int importsCount = imports.size();
 		if (importsCount != 0) {
-			List<String> sortImports = new ArrayList<String>(importsCount);
-			for (ClassInfo ic : imports) {
-				sortImports.add(ic.getAlias().getFullName());
-			}
-			Collections.sort(sortImports);
-
-			for (String imp : sortImports) {
-				clsCode.startLine("import ").add(imp).add(';');
-			}
+			List<ClassInfo> sortedImports = new ArrayList<>(imports);
+			sortedImports.sort(Comparator.comparing(ClassInfo::getAliasFullName));
+			sortedImports.forEach(classInfo -> {
+				clsCode.startLine("import ");
+				ClassNode classNode = cls.root().resolveClass(classInfo);
+				if (classNode != null) {
+					clsCode.attachAnnotation(classNode);
+				}
+				clsCode.add(classInfo.getAliasFullName());
+				clsCode.add(';');
+			});
 			clsCode.newLine();
-
-			sortImports.clear();
 			imports.clear();
 		}
 		clsCode.add(clsBody);
-		return clsCode;
+		return clsCode.finish();
 	}
 
 	public void addClassCode(CodeWriter code) throws CodegenException {
 		if (cls.contains(AFlag.DONT_GENERATE)) {
 			return;
 		}
-		if (cls.contains(AFlag.INCONSISTENT_CODE)) {
-			code.startLine("// jadx: inconsistent code");
-		}
+		CodeGenUtils.addComments(code, cls);
+		insertDecompilationProblems(code, cls);
 		addClassDeclaration(code);
 		addClassBody(code);
 	}
@@ -130,13 +121,13 @@ public class ClassGen {
 		}
 
 		// 'static' and 'private' modifier not allowed for top classes (not inner)
-		if (!cls.getAlias().isInner()) {
+		if (!cls.getClassInfo().isInner()) {
 			af = af.remove(AccessFlags.ACC_STATIC).remove(AccessFlags.ACC_PRIVATE);
 		}
 
 		annotationGen.addForClass(clsCode);
-		insertSourceFileInfo(clsCode, cls);
 		insertRenameInfo(clsCode, cls);
+		CodeGenUtils.addSourceFileInfo(clsCode, cls);
 		clsCode.startLine(af.makeString());
 		if (af.isInterface()) {
 			if (af.isAnnotation()) {
@@ -149,9 +140,9 @@ public class ClassGen {
 			clsCode.add("class ");
 		}
 		clsCode.attachDefinition(cls);
-		clsCode.add(cls.getShortName());
+		clsCode.add(cls.getClassInfo().getAliasShortName());
 
-		addGenericMap(clsCode, cls.getGenericMap());
+		addGenericMap(clsCode, cls.getGenerics(), true);
 		clsCode.add(' ');
 
 		ArgType sup = cls.getSuperClass();
@@ -169,7 +160,7 @@ public class ClassGen {
 			} else {
 				clsCode.add("implements ");
 			}
-			for (Iterator<ArgType> it = cls.getInterfaces().iterator(); it.hasNext(); ) {
+			for (Iterator<ArgType> it = cls.getInterfaces().iterator(); it.hasNext();) {
 				ArgType interf = it.next();
 				useClass(clsCode, interf);
 				if (it.hasNext()) {
@@ -182,31 +173,36 @@ public class ClassGen {
 		}
 	}
 
-	public boolean addGenericMap(CodeWriter code, Map<ArgType, List<ArgType>> gmap) {
-		if (gmap == null || gmap.isEmpty()) {
+	public boolean addGenericMap(CodeWriter code, List<GenericInfo> generics, boolean classDeclaration) {
+		if (generics == null || generics.isEmpty()) {
 			return false;
 		}
 		code.add('<');
 		int i = 0;
-		for (Entry<ArgType, List<ArgType>> e : gmap.entrySet()) {
-			ArgType type = e.getKey();
-			List<ArgType> list = e.getValue();
+		for (GenericInfo genericInfo : generics) {
 			if (i != 0) {
 				code.add(", ");
 			}
+			ArgType type = genericInfo.getGenericType();
 			if (type.isGenericType()) {
 				code.add(type.getObject());
 			} else {
 				useClass(code, type);
 			}
+			List<ArgType> list = genericInfo.getExtendsList();
 			if (list != null && !list.isEmpty()) {
 				code.add(" extends ");
-				for (Iterator<ArgType> it = list.iterator(); it.hasNext(); ) {
+				for (Iterator<ArgType> it = list.iterator(); it.hasNext();) {
 					ArgType g = it.next();
 					if (g.isGenericType()) {
 						code.add(g.getObject());
 					} else {
 						useClass(code, g);
+						if (classDeclaration
+								&& !cls.getClassInfo().isInner()
+								&& cls.root().getArgs().isUseImports()) {
+							addImport(ClassInfo.fromType(cls.root(), g));
+						}
 					}
 					if (it.hasNext()) {
 						code.add(" & ");
@@ -232,8 +228,7 @@ public class ClassGen {
 
 	private void addInnerClasses(CodeWriter code, ClassNode cls) throws CodegenException {
 		for (ClassNode innerCls : cls.getInnerClasses()) {
-			if (innerCls.contains(AFlag.DONT_GENERATE)
-					|| innerCls.contains(AFlag.ANONYMOUS_CLASS)) {
+			if (innerCls.contains(AFlag.DONT_GENERATE)) {
 				continue;
 			}
 			ClassGen inClGen = new ClassGen(innerCls, getParentGen());
@@ -261,20 +256,26 @@ public class ClassGen {
 			if (code.getLine() != clsDeclLine) {
 				code.newLine();
 			}
+			int savedIndent = code.getIndent();
 			try {
 				addMethod(code, mth);
 			} catch (Exception e) {
+				if (mth.getParentClass().getTopParentClass().contains(AFlag.RESTART_CODEGEN)) {
+					throw new JadxRuntimeException("Method generation error", e);
+				}
 				code.newLine().add("/*");
-				code.newLine().add(ErrorsCounter.methodError(mth, "Method generation error", e));
-				code.newLine().add(Utils.getStackTrace(e));
+				code.newLine().addMultiLine(ErrorsCounter.methodError(mth, "Method generation error", e));
+				Utils.appendStackTrace(code, e);
 				code.newLine().add("*/");
+				code.setIndent(savedIndent);
+				mth.addError("Method generation error: " + e.getMessage(), e);
 			}
 		}
 	}
 
 	private static List<MethodNode> sortMethodsByLine(List<MethodNode> methods) {
-		List<MethodNode> out = new ArrayList<MethodNode>(methods);
-		Collections.sort(out, METHOD_LINE_COMPARATOR);
+		List<MethodNode> out = new ArrayList<>(methods);
+		out.sort(Comparator.comparingInt(LineAttrNode::getSourceLine));
 		return out;
 	}
 
@@ -287,31 +288,21 @@ public class ClassGen {
 		return false;
 	}
 
-	private void addMethod(CodeWriter code, MethodNode mth) throws CodegenException {
+	public void addMethod(CodeWriter code, MethodNode mth) throws CodegenException {
+		CodeGenUtils.addComments(code, mth);
 		if (mth.getAccessFlags().isAbstract() || mth.getAccessFlags().isNative()) {
 			MethodGen mthGen = new MethodGen(this, mth);
 			mthGen.addDefinition(code);
-			if (cls.getAccessFlags().isAnnotation()) {
-				Object def = annotationGen.getAnnotationDefaultValue(mth.getName());
-				if (def != null) {
-					code.add(" default ");
-					annotationGen.encodeValue(code, def);
-				}
-			}
 			code.add(';');
 		} else {
+			insertDecompilationProblems(code, mth);
 			boolean badCode = mth.contains(AFlag.INCONSISTENT_CODE);
-			if (badCode) {
-				code.startLine("/* JADX WARNING: inconsistent code. */");
-				code.startLine("/* Code decompiled incorrectly, please refer to instructions dump. */");
-				ErrorsCounter.methodError(mth, "Inconsistent code");
-				if (showInconsistentCode) {
-					mth.remove(AFlag.INCONSISTENT_CODE);
-					badCode = false;
-				}
+			if (badCode && showInconsistentCode) {
+				mth.remove(AFlag.INCONSISTENT_CODE);
+				badCode = false;
 			}
 			MethodGen mthGen;
-			if (badCode || mth.contains(AType.JADX_ERROR) || fallback) {
+			if (badCode || fallback || mth.contains(AType.JADX_ERROR) || mth.getRegion() == null) {
 				mthGen = MethodGen.getFallbackMethodGen(mth);
 			} else {
 				mthGen = new MethodGen(this, mth);
@@ -321,45 +312,71 @@ public class ClassGen {
 			}
 			code.add('{');
 			code.incIndent();
-			insertSourceFileInfo(code, mth);
-			if (fallback) {
-				mthGen.addFallbackMethodCode(code);
-			} else {
-				mthGen.addInstructions(code);
-			}
+			mthGen.addInstructions(code);
 			code.decIndent();
 			code.startLine('}');
+		}
+	}
+
+	public void insertDecompilationProblems(CodeWriter code, AttrNode node) {
+		List<JadxError> errors = node.getAll(AType.JADX_ERROR);
+		if (!errors.isEmpty()) {
+			errors.stream().distinct().sorted().forEach(err -> {
+				code.startLine("/*  JADX ERROR: ").add(err.getError());
+				Throwable cause = err.getCause();
+				if (cause != null) {
+					code.incIndent();
+					Utils.appendStackTrace(code, cause);
+					code.decIndent();
+				}
+				code.add("*/");
+			});
+		}
+		List<String> warns = node.getAll(AType.JADX_WARN);
+		if (!warns.isEmpty()) {
+			warns.stream().distinct().sorted()
+					.forEach(warn -> code.startLine("/* JADX WARNING: ").addMultiLine(warn).add(" */"));
 		}
 	}
 
 	private void addFields(CodeWriter code) throws CodegenException {
 		addEnumFields(code);
 		for (FieldNode f : cls.getFields()) {
-			if (f.contains(AFlag.DONT_GENERATE)) {
-				continue;
-			}
-			annotationGen.addForField(code, f);
-			code.startLine(f.getAccessFlags().makeString());
-			useType(code, f.getType());
-			code.add(' ');
-			code.attachDefinition(f);
-			code.add(f.getAlias());
-			FieldInitAttr fv = f.get(AType.FIELD_INIT);
-			if (fv != null) {
-				code.add(" = ");
-				if (fv.getValue() == null) {
-					code.add(TypeGen.literalToString(0, f.getType(), cls));
-				} else {
-					if (fv.getValueType() == InitType.CONST) {
-						annotationGen.encodeValue(code, fv.getValue());
-					} else if (fv.getValueType() == InitType.INSN) {
-						InsnGen insnGen = makeInsnGen(fv.getInsnMth());
-						addInsnBody(insnGen, code, fv.getInsn());
-					}
+			addField(code, f);
+		}
+	}
+
+	public void addField(CodeWriter code, FieldNode f) {
+		if (f.contains(AFlag.DONT_GENERATE)) {
+			return;
+		}
+		CodeGenUtils.addComments(code, f);
+		annotationGen.addForField(code, f);
+
+		if (f.getFieldInfo().isRenamed()) {
+			code.newLine();
+			CodeGenUtils.addRenamedComment(code, f, f.getName());
+		}
+		code.startLine(f.getAccessFlags().makeString());
+		useType(code, f.getType());
+		code.add(' ');
+		code.attachDefinition(f);
+		code.add(f.getAlias());
+		FieldInitAttr fv = f.get(AType.FIELD_INIT);
+		if (fv != null) {
+			code.add(" = ");
+			if (fv.getValue() == null) {
+				code.add(TypeGen.literalToString(0, f.getType(), cls, fallback));
+			} else {
+				if (fv.getValueType() == InitType.CONST) {
+					annotationGen.encodeValue(code, fv.getValue());
+				} else if (fv.getValueType() == InitType.INSN) {
+					InsnGen insnGen = makeInsnGen(fv.getInsnMth());
+					addInsnBody(insnGen, code, fv.getInsn());
 				}
 			}
-			code.add(';');
 		}
+		code.add(';');
 	}
 
 	private boolean isFieldsPresents() {
@@ -377,7 +394,7 @@ public class ClassGen {
 			return;
 		}
 		InsnGen igen = null;
-		for (Iterator<EnumField> it = enumFields.getFields().iterator(); it.hasNext(); ) {
+		for (Iterator<EnumField> it = enumFields.getFields().iterator(); it.hasNext();) {
 			EnumField f = it.next();
 			code.startLine(f.getField().getAlias());
 			ConstructorInsn constrInsn = f.getConstrInsn();
@@ -439,7 +456,7 @@ public class ClassGen {
 	}
 
 	public void useClass(CodeWriter code, ArgType type) {
-		useClass(code, ClassInfo.extCls(cls.dex(), type));
+		useClass(code, ClassInfo.fromType(cls.root(), type));
 		ArgType[] generics = type.getGenericTypes();
 		if (generics != null) {
 			code.add('<');
@@ -468,18 +485,28 @@ public class ClassGen {
 	public void useClass(CodeWriter code, ClassInfo classInfo) {
 		ClassNode classNode = cls.dex().resolveClass(classInfo);
 		if (classNode != null) {
-			code.attachAnnotation(classNode);
+			useClass(code, classNode);
+		} else {
+			addClsName(code, classInfo);
 		}
-		String baseClass = useClassInternal(cls.getAlias(), classInfo.getAlias());
-		code.add(baseClass);
+	}
+
+	public void useClass(CodeWriter code, ClassNode classNode) {
+		code.attachAnnotation(classNode);
+		addClsName(code, classNode.getClassInfo());
+	}
+
+	private void addClsName(CodeWriter code, ClassInfo classInfo) {
+		String clsName = useClassInternal(cls.getClassInfo(), classInfo);
+		code.add(clsName);
 	}
 
 	private String useClassInternal(ClassInfo useCls, ClassInfo extClsInfo) {
-		String fullName = extClsInfo.getFullName();
-		if (fallback) {
+		String fullName = extClsInfo.getAliasFullName();
+		if (fallback || !useImports) {
 			return fullName;
 		}
-		String shortName = extClsInfo.getShortName();
+		String shortName = extClsInfo.getAliasShortName();
 		if (extClsInfo.getPackage().equals("java.lang") && extClsInfo.getParentClass() == null) {
 			return shortName;
 		}
@@ -505,15 +532,15 @@ public class ClassGen {
 		if (extClsInfo.isDefaultPackage()) {
 			return shortName;
 		}
-		if (extClsInfo.getPackage().equals(useCls.getPackage())) {
-			fullName = extClsInfo.getNameWithoutPackage();
+		if (extClsInfo.getAliasPkg().equals(useCls.getAliasPkg())) {
+			fullName = extClsInfo.getAliasNameWithoutPackage();
 		}
 		for (ClassInfo importCls : getImports()) {
 			if (!importCls.equals(extClsInfo)
-					&& importCls.getShortName().equals(shortName)) {
+					&& importCls.getAliasShortName().equals(shortName)) {
 				if (extClsInfo.isInner()) {
-					String parent = useClassInternal(useCls, extClsInfo.getParentClass().getAlias());
-					return parent + "." + shortName;
+					String parent = useClassInternal(useCls, extClsInfo.getParentClass());
+					return parent + '.' + shortName;
 				} else {
 					return fullName;
 				}
@@ -525,13 +552,13 @@ public class ClassGen {
 
 	private void addImport(ClassInfo classInfo) {
 		if (parentGen != null) {
-			parentGen.addImport(classInfo.getAlias());
+			parentGen.addImport(classInfo);
 		} else {
 			imports.add(classInfo);
 		}
 	}
 
-	private Set<ClassInfo> getImports() {
+	public Set<ClassInfo> getImports() {
 		if (parentGen != null) {
 			return parentGen.getImports();
 		} else {
@@ -561,15 +588,15 @@ public class ClassGen {
 		if (useCls == null) {
 			return false;
 		}
-		String shortName = searchCls.getShortName();
-		if (useCls.getShortName().equals(shortName)) {
+		String shortName = searchCls.getAliasShortName();
+		if (useCls.getAliasShortName().equals(shortName)) {
 			return true;
 		}
 		ClassNode classNode = dex.resolveClass(useCls);
 		if (classNode != null) {
 			for (ClassNode inner : classNode.getInnerClasses()) {
 				if (inner.getShortName().equals(shortName)
-						&& !inner.getAlias().equals(searchCls)) {
+						&& !inner.getFullName().equals(searchCls.getAliasFullName())) {
 					return true;
 				}
 			}
@@ -577,18 +604,10 @@ public class ClassGen {
 		return searchCollision(dex, useCls.getParentClass(), searchCls);
 	}
 
-	private void insertSourceFileInfo(CodeWriter code, AttrNode node) {
-		SourceFileAttr sourceFileAttr = node.get(AType.SOURCE_FILE);
-		if (sourceFileAttr != null) {
-			code.startLine("/* compiled from: ").add(sourceFileAttr.getFileName()).add(" */");
-		}
-	}
-
 	private void insertRenameInfo(CodeWriter code, ClassNode cls) {
 		ClassInfo classInfo = cls.getClassInfo();
-		if (classInfo.isRenamed()
-				&& !cls.getShortName().equals(cls.getAlias().getShortName())) {
-			code.startLine("/* renamed from: ").add(classInfo.getFullName()).add(" */");
+		if (classInfo.hasAlias()) {
+			CodeGenUtils.addRenamedComment(code, cls, classInfo.getType().getObject());
 		}
 	}
 

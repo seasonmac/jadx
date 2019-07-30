@@ -1,5 +1,11 @@
 package jadx.core.dex.visitors;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
@@ -9,27 +15,31 @@ import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.InsnWrapArg;
 import jadx.core.dex.instructions.args.RegisterArg;
+import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.nodes.parser.FieldInitAttr;
 import jadx.core.utils.exceptions.JadxException;
-
-import java.util.Set;
 
 public class DependencyCollector extends AbstractVisitor {
 
 	@Override
 	public boolean visit(ClassNode cls) throws JadxException {
 		DexNode dex = cls.dex();
-		Set<ClassNode> depList = cls.getDependencies();
-		processClass(cls, dex, depList);
+		Set<ClassNode> depSet = new HashSet<>();
+		processClass(cls, dex, depSet);
 		for (ClassNode inner : cls.getInnerClasses()) {
-			processClass(inner, dex, depList);
+			processClass(inner, dex, depSet);
 		}
-		depList.remove(cls);
+		depSet.remove(cls);
+
+		List<ClassNode> depList = new ArrayList<>(depSet);
+		depList.sort(Comparator.comparing(c -> c.getClassInfo().getFullName()));
+		cls.setDependencies(depList);
 		return false;
 	}
 
@@ -40,6 +50,12 @@ public class DependencyCollector extends AbstractVisitor {
 		}
 		for (FieldNode fieldNode : cls.getFields()) {
 			addDep(dex, depList, fieldNode.getType());
+
+			// process instructions from field init
+			FieldInitAttr fieldInitAttr = fieldNode.get(AType.FIELD_INIT);
+			if (fieldInitAttr != null && fieldInitAttr.getValueType() == FieldInitAttr.InitType.INSN) {
+				processInsn(dex, depList, fieldInitAttr.getInsn());
+			}
 		}
 		// TODO: process annotations and generics
 		for (MethodNode methodNode : cls.getMethods()) {
@@ -90,13 +106,16 @@ public class DependencyCollector extends AbstractVisitor {
 		} else if (insn instanceof InvokeNode) {
 			ClassInfo declClass = ((InvokeNode) insn).getCallMth().getDeclClass();
 			addDep(dex, depList, declClass);
+		} else if (insn instanceof ConstructorInsn) {
+			ClassInfo declClass = ((ConstructorInsn) insn).getCallMth().getDeclClass();
+			addDep(dex, depList, declClass);
 		}
 	}
 
 	private static void addDep(DexNode dex, Set<ClassNode> depList, ArgType type) {
 		if (type != null) {
-			if (type.isObject()) {
-				addDep(dex, depList, ClassInfo.fromName(dex, type.getObject()));
+			if (type.isObject() && !type.isGenericType()) {
+				addDep(dex, depList, ClassInfo.fromType(dex.root(), type));
 				ArgType[] genericTypes = type.getGenericTypes();
 				if (type.isGeneric() && genericTypes != null) {
 					for (ArgType argType : genericTypes) {

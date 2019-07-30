@@ -1,8 +1,8 @@
 package jadx.core.dex.attributes.annotations;
 
-import jadx.core.dex.instructions.args.ArgType;
-
 import java.util.Map;
+
+import jadx.core.dex.instructions.args.ArgType;
 
 public class Annotation {
 
@@ -42,7 +42,6 @@ public class Annotation {
 
 	@Override
 	public String toString() {
-		return "Annotation[" + visibility + ", " + atype + ", " + values + "]";
+		return "Annotation[" + visibility + ", " + atype + ", " + values + ']';
 	}
-
 }

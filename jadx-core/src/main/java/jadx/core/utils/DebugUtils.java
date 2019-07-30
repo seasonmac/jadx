@@ -1,5 +1,16 @@
 package jadx.core.utils;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.jetbrains.annotations.TestOnly;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import jadx.core.codegen.CodeWriter;
 import jadx.core.codegen.InsnGen;
 import jadx.core.codegen.MethodGen;
@@ -16,38 +27,41 @@ import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.DotGraphVisitor;
+import jadx.core.dex.visitors.IDexTreeVisitor;
 import jadx.core.dex.visitors.regions.DepthRegionTraversal;
 import jadx.core.dex.visitors.regions.TracedRegionVisitor;
 import jadx.core.utils.exceptions.CodegenException;
+import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 @Deprecated
+@TestOnly
 public class DebugUtils {
 	private static final Logger LOG = LoggerFactory.getLogger(DebugUtils.class);
+
+	private DebugUtils() {
+	}
 
 	public static void dump(MethodNode mth) {
 		dump(mth, "");
 	}
 
-	public static void dump(MethodNode mth, String desc) {
-		File out = new File("test-graph" + desc + "-tmp");
-		DotGraphVisitor.dump(out).visit(mth);
-		DotGraphVisitor.dumpRaw(out).visit(mth);
-		DotGraphVisitor.dumpRegions(out).visit(mth);
+	public static void dumpRaw(MethodNode mth, String desc) {
+		File out = new File("test-graph-" + desc + "-tmp");
+		DotGraphVisitor.dumpRaw().save(out, mth);
 	}
 
-	public static void printRegionsWithBlock(MethodNode mth, final BlockNode block) {
-		final Set<IRegion> regions = new LinkedHashSet<IRegion>();
+	public static void dump(MethodNode mth, String desc) {
+		File out = new File("test-graph-" + desc + "-tmp");
+		DotGraphVisitor.dump().save(out, mth);
+		DotGraphVisitor.dumpRaw().save(out, mth);
+		DotGraphVisitor.dumpRegions().save(out, mth);
+	}
+
+	public static void printRegionsWithBlock(MethodNode mth, BlockNode block) {
+		Set<IRegion> regions = new LinkedHashSet<>();
 		DepthRegionTraversal.traverse(mth, new TracedRegionVisitor() {
 			@Override
 			public void processBlockTraced(MethodNode mth, IBlock container, IRegion currentRegion) {
@@ -57,6 +71,15 @@ public class DebugUtils {
 			}
 		});
 		LOG.debug(" Found block: {} in regions: {}", block, regions);
+	}
+
+	public static IDexTreeVisitor printRegionsVisitor() {
+		return new AbstractVisitor() {
+			@Override
+			public void visit(MethodNode mth) throws JadxException {
+				printRegions(mth, true);
+			}
+		};
 	}
 
 	public static void printRegions(MethodNode mth) {
@@ -73,7 +96,7 @@ public class DebugUtils {
 	}
 
 	private static void printRegion(MethodNode mth, IRegion region, String indent, boolean printInsns) {
-		LOG.debug("{}{}", indent, region);
+		LOG.debug("{}{} {}", indent, region, region.getAttributesString());
 		indent += "|  ";
 		for (IContainer container : region.getSubBlocks()) {
 			if (container instanceof IRegion) {
@@ -96,9 +119,10 @@ public class DebugUtils {
 				CodeWriter code = new CodeWriter();
 				ig.makeInsn(insn, code);
 				String insnStr = code.toString().substring(CodeWriter.NL.length());
-				LOG.debug("{} - {}", indent, insnStr);
+				String attrStr = insn.isAttrStorageEmpty() ? "" : '\t' + insn.getAttributesString();
+				LOG.debug("{}|> {}{}", indent, insnStr, attrStr);
 			} catch (CodegenException e) {
-				LOG.debug("{} - {}", indent, insn);
+				LOG.debug("{}|>!! {}", indent, insn);
 			}
 		}
 	}
@@ -116,7 +140,7 @@ public class DebugUtils {
 				}
 			}
 		}
-		checkPHI(mth);
+		// checkPHI(mth);
 	}
 
 	private static void checkSSAVar(MethodNode mth, InsnNode insn, RegisterArg reg) {
@@ -126,24 +150,19 @@ public class DebugUtils {
 		}
 		for (RegisterArg useArg : sVar.getUseList()) {
 			InsnNode parentInsn = useArg.getParentInsn();
-			if (parentInsn != null) {
-				if (!parentInsn.containsArg(useArg)) {
-					throw new JadxRuntimeException("Incorrect use info in PHI insn");
-				}
+			if (parentInsn != null && !parentInsn.containsArg(useArg)) {
+				throw new JadxRuntimeException("Incorrect use info in PHI insn");
 			}
 		}
 	}
 
 	private static void checkPHI(MethodNode mth) {
 		for (BlockNode block : mth.getBasicBlocks()) {
-			List<PhiInsn> phis = new ArrayList<PhiInsn>();
+			List<PhiInsn> phis = new ArrayList<>();
 			for (InsnNode insn : block.getInstructions()) {
 				if (insn.getType() == InsnType.PHI) {
 					PhiInsn phi = (PhiInsn) insn;
 					phis.add(phi);
-					if (phi.getArgsCount() != phi.getBlockBinds().size()) {
-						throw new JadxRuntimeException("Incorrect args and binds in PHI");
-					}
 					if (phi.getArgsCount() == 0) {
 						throw new JadxRuntimeException("No args and binds in PHI");
 					}
@@ -175,8 +194,7 @@ public class DebugUtils {
 			}
 		}
 		for (SSAVar ssaVar : mth.getSVars()) {
-			PhiInsn usedInPhi = ssaVar.getUsedInPhi();
-			if (usedInPhi != null) {
+			for (PhiInsn usedInPhi : ssaVar.getUsedInPhi()) {
 				boolean found = false;
 				for (RegisterArg useArg : ssaVar.getUseList()) {
 					InsnNode parentInsn = useArg.getParentInsn();
@@ -188,6 +206,13 @@ public class DebugUtils {
 					throw new JadxRuntimeException("Used in phi incorrect");
 				}
 			}
+		}
+	}
+
+	public static void printMap(String desc, Map<?, ?> map) {
+		LOG.debug("Map of {}, size: {}", desc, map.size());
+		for (Map.Entry<?, ?> entry : map.entrySet()) {
+			LOG.debug("  {} : {}", entry.getKey(), entry.getValue());
 		}
 	}
 }
