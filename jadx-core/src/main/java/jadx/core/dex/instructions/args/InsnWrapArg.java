@@ -36,7 +36,7 @@ public final class InsnWrapArg extends InsnArg {
 
 	@Override
 	public InsnArg duplicate() {
-		InsnWrapArg copy = new InsnWrapArg(wrappedInsn.copy());
+		InsnWrapArg copy = new InsnWrapArg(wrappedInsn.copyWithoutResult());
 		copy.setType(type);
 		return copyCommonParams(copy);
 	}
@@ -76,10 +76,9 @@ public final class InsnWrapArg extends InsnArg {
 
 	@Override
 	public String toString() {
-		if (wrappedInsn.getType() == InsnType.CONST_STR
-				&& Objects.equals(type, ArgType.STRING)) {
+		if (wrappedInsn.getType() == InsnType.CONST_STR && Objects.equals(type, ArgType.STRING)) {
 			return "(\"" + ((ConstStringNode) wrappedInsn).getString() + "\")";
 		}
-		return "(wrap: " + type + "\n  " + wrappedInsn + ')';
+		return "(wrap: " + type + " : " + wrappedInsn + ')';
 	}
 }

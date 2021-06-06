@@ -34,6 +34,8 @@ public class NLS {
 		LANG_LOCALES.add(new LangLocale("en", "US")); // As default language
 		LANG_LOCALES.add(new LangLocale("zh", "CN"));
 		LANG_LOCALES.add(new LangLocale("es", "ES"));
+		LANG_LOCALES.add(new LangLocale("de", "DE"));
+		LANG_LOCALES.add(new LangLocale("ko", "KR"));
 
 		LANG_LOCALES.forEach(NLS::load);
 
@@ -61,14 +63,16 @@ public class NLS {
 		LANG_LOCALES_MAP.put(locale, bundle);
 	}
 
-	public static String str(String key, Object... parameters) {
-		String value;
+	public static String str(String key) {
 		try {
-			value = localizedMessagesMap.getString(key);
-		} catch (MissingResourceException e) {
-			value = FALLBACK_MESSAGES_MAP.getString(key); // definitely exists
+			return localizedMessagesMap.getString(key);
+		} catch (Exception e) {
+			return FALLBACK_MESSAGES_MAP.getString(key);
 		}
-		return String.format(value, parameters);
+	}
+
+	public static String str(String key, Object... parameters) {
+		return String.format(str(key), parameters);
 	}
 
 	public static String str(String key, LangLocale locale) {

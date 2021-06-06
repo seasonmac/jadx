@@ -6,7 +6,12 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
+
+import jadx.api.data.ICodeData;
+import jadx.api.impl.AnnotatedCodeWriter;
+import jadx.api.impl.InMemoryCodeCache;
 
 public class JadxArgs {
 
@@ -22,6 +27,9 @@ public class JadxArgs {
 	private File outDirSrc;
 	private File outDirRes;
 
+	private ICodeCache codeCache = new InMemoryCodeCache();
+	private Function<JadxArgs, ICodeWriter> codeWriterProvider = AnnotatedCodeWriter::new;
+
 	private int threadsCount = DEFAULT_THREADS_COUNT;
 
 	private boolean cfgOutput = false;
@@ -32,7 +40,9 @@ public class JadxArgs {
 
 	private boolean useImports = true;
 	private boolean debugInfo = true;
+	private boolean insertDebugLines = false;
 	private boolean inlineAnonymousClasses = true;
+	private boolean inlineMethods = true;
 
 	private boolean skipResources = false;
 	private boolean skipSources = false;
@@ -45,6 +55,8 @@ public class JadxArgs {
 	private boolean deobfuscationOn = false;
 	private boolean deobfuscationForceSave = false;
 	private boolean useSourceNameAsClassAlias = false;
+	private boolean parseKotlinMetadata = false;
+	private File deobfuscationMapFile = null;
 
 	private int deobfuscationMinLength = 0;
 	private int deobfuscationMaxLength = Integer.MAX_VALUE;
@@ -67,6 +79,8 @@ public class JadxArgs {
 	}
 
 	private OutputFormatEnum outputFormat = OutputFormatEnum.JAVA;
+
+	private ICodeData codeData;
 
 	public JadxArgs() {
 		// use default options
@@ -170,12 +184,28 @@ public class JadxArgs {
 		this.debugInfo = debugInfo;
 	}
 
+	public boolean isInsertDebugLines() {
+		return insertDebugLines;
+	}
+
+	public void setInsertDebugLines(boolean insertDebugLines) {
+		this.insertDebugLines = insertDebugLines;
+	}
+
 	public boolean isInlineAnonymousClasses() {
 		return inlineAnonymousClasses;
 	}
 
 	public void setInlineAnonymousClasses(boolean inlineAnonymousClasses) {
 		this.inlineAnonymousClasses = inlineAnonymousClasses;
+	}
+
+	public boolean isInlineMethods() {
+		return inlineMethods;
+	}
+
+	public void setInlineMethods(boolean inlineMethods) {
+		this.inlineMethods = inlineMethods;
 	}
 
 	public boolean isSkipResources() {
@@ -226,6 +256,14 @@ public class JadxArgs {
 		this.useSourceNameAsClassAlias = useSourceNameAsClassAlias;
 	}
 
+	public boolean isParseKotlinMetadata() {
+		return parseKotlinMetadata;
+	}
+
+	public void setParseKotlinMetadata(boolean parseKotlinMetadata) {
+		this.parseKotlinMetadata = parseKotlinMetadata;
+	}
+
 	public int getDeobfuscationMinLength() {
 		return deobfuscationMinLength;
 	}
@@ -240,6 +278,14 @@ public class JadxArgs {
 
 	public void setDeobfuscationMaxLength(int deobfuscationMaxLength) {
 		this.deobfuscationMaxLength = deobfuscationMaxLength;
+	}
+
+	public File getDeobfuscationMapFile() {
+		return deobfuscationMapFile;
+	}
+
+	public void setDeobfuscationMapFile(File deobfuscationMapFile) {
+		this.deobfuscationMapFile = deobfuscationMapFile;
 	}
 
 	public boolean isEscapeUnicode() {
@@ -314,6 +360,14 @@ public class JadxArgs {
 		}
 	}
 
+	public void setRenameFlags(Set<RenameEnum> renameFlags) {
+		this.renameFlags = renameFlags;
+	}
+
+	public Set<RenameEnum> getRenameFlags() {
+		return renameFlags;
+	}
+
 	public OutputFormatEnum getOutputFormat() {
 		return outputFormat;
 	}
@@ -324,6 +378,30 @@ public class JadxArgs {
 
 	public void setOutputFormat(OutputFormatEnum outputFormat) {
 		this.outputFormat = outputFormat;
+	}
+
+	public ICodeCache getCodeCache() {
+		return codeCache;
+	}
+
+	public void setCodeCache(ICodeCache codeCache) {
+		this.codeCache = codeCache;
+	}
+
+	public Function<JadxArgs, ICodeWriter> getCodeWriterProvider() {
+		return codeWriterProvider;
+	}
+
+	public void setCodeWriterProvider(Function<JadxArgs, ICodeWriter> codeWriterProvider) {
+		this.codeWriterProvider = codeWriterProvider;
+	}
+
+	public ICodeData getCodeData() {
+		return codeData;
+	}
+
+	public void setCodeData(ICodeData codeData) {
+		this.codeData = codeData;
 	}
 
 	@Override
@@ -341,8 +419,10 @@ public class JadxArgs {
 				+ ", skipResources=" + skipResources
 				+ ", skipSources=" + skipSources
 				+ ", deobfuscationOn=" + deobfuscationOn
+				+ ", deobfuscationMapFile=" + deobfuscationMapFile
 				+ ", deobfuscationForceSave=" + deobfuscationForceSave
 				+ ", useSourceNameAsClassAlias=" + useSourceNameAsClassAlias
+				+ ", parseKotlinMetadata=" + parseKotlinMetadata
 				+ ", deobfuscationMinLength=" + deobfuscationMinLength
 				+ ", deobfuscationMaxLength=" + deobfuscationMaxLength
 				+ ", escapeUnicode=" + escapeUnicode
@@ -352,6 +432,8 @@ public class JadxArgs {
 				+ ", fsCaseSensitive=" + fsCaseSensitive
 				+ ", renameFlags=" + renameFlags
 				+ ", outputFormat=" + outputFormat
+				+ ", codeCache=" + codeCache
+				+ ", codeWriter=" + codeWriterProvider.apply(this).getClass().getSimpleName()
 				+ '}';
 	}
 }

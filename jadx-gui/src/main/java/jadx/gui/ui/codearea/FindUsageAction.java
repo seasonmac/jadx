@@ -1,66 +1,50 @@
 package jadx.gui.ui.codearea;
 
-import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 
 import javax.swing.*;
-import javax.swing.event.PopupMenuEvent;
-import javax.swing.event.PopupMenuListener;
 
-import org.fife.ui.rsyntaxtextarea.Token;
+import org.jetbrains.annotations.Nullable;
 
-import jadx.api.JavaNode;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.ContentPanel;
-import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.UsageDialog;
 import jadx.gui.utils.NLS;
 
-public final class FindUsageAction extends AbstractAction implements PopupMenuListener {
+import static javax.swing.KeyStroke.getKeyStroke;
+
+public final class FindUsageAction extends JNodeMenuAction<JNode> {
 	private static final long serialVersionUID = 4692546569977976384L;
 
-	private final transient ContentPanel contentPanel;
-	private final transient CodeArea codeArea;
+	public FindUsageAction(CodeArea codeArea) {
+		super(NLS.str("popup.find_usage") + " (x)", codeArea);
+		KeyStroke key = getKeyStroke(KeyEvent.VK_X, 0);
+		codeArea.getInputMap().put(key, "trigger usage");
+		codeArea.getActionMap().put("trigger usage", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				node = codeArea.getNodeUnderCaret();
+				showUsageDialog();
+			}
+		});
+	}
 
-	private transient JavaNode node;
-
-	public FindUsageAction(ContentPanel contentPanel, CodeArea codeArea) {
-		super(NLS.str("popup.find_usage"));
-		this.contentPanel = contentPanel;
-		this.codeArea = codeArea;
+	private void showUsageDialog() {
+		if (node != null) {
+			UsageDialog usageDialog = new UsageDialog(codeArea.getMainWindow(), node);
+			usageDialog.setVisible(true);
+			node = null;
+		}
 	}
 
 	@Override
 	public void actionPerformed(ActionEvent e) {
-		if (node == null) {
-			return;
-		}
-		MainWindow mainWindow = contentPanel.getTabbedPane().getMainWindow();
-		JNode jNode = mainWindow.getCacheObject().getNodeCache().makeFrom(node);
-		UsageDialog usageDialog = new UsageDialog(mainWindow, jNode);
-		usageDialog.setVisible(true);
+		showUsageDialog();
 	}
 
+	@Nullable
 	@Override
-	public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
-		node = null;
-		Point pos = codeArea.getMousePosition();
-		if (pos != null) {
-			Token token = codeArea.viewToToken(pos);
-			if (token != null) {
-				node = codeArea.getJavaNodeAtOffset(token.getOffset());
-			}
-		}
-		setEnabled(node != null);
-	}
-
-	@Override
-	public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
-		// do nothing
-	}
-
-	@Override
-	public void popupMenuCanceled(PopupMenuEvent e) {
-		// do nothing
+	public JNode getNodeByOffset(int offset) {
+		return codeArea.getJNodeAtOffset(offset);
 	}
 }

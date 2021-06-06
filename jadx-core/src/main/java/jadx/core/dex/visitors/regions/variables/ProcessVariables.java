@@ -26,6 +26,7 @@ import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.regions.loops.LoopRegion;
 import jadx.core.dex.visitors.AbstractVisitor;
+import jadx.core.dex.visitors.regions.AbstractRegionVisitor;
 import jadx.core.dex.visitors.regions.DepthRegionTraversal;
 import jadx.core.dex.visitors.typeinference.TypeCompare;
 import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
@@ -41,6 +42,7 @@ public class ProcessVariables extends AbstractVisitor {
 		if (mth.isNoCode() || mth.getSVars().isEmpty()) {
 			return;
 		}
+		removeUnusedResults(mth);
 
 		List<CodeVar> codeVars = collectCodeVars(mth);
 		if (codeVars.isEmpty()) {
@@ -64,6 +66,24 @@ public class ProcessVariables extends AbstractVisitor {
 		}
 	}
 
+	private static void removeUnusedResults(MethodNode mth) {
+		DepthRegionTraversal.traverse(mth, new AbstractRegionVisitor() {
+			@Override
+			public void processBlock(MethodNode mth, IBlock container) {
+				for (InsnNode insn : container.getInstructions()) {
+					RegisterArg resultArg = insn.getResult();
+					if (resultArg != null) {
+						SSAVar ssaVar = resultArg.getSVar();
+						if (ssaVar.getUseList().isEmpty() && insn.canRemoveResult()) {
+							insn.setResult(null);
+							mth.removeSVar(ssaVar);
+						}
+					}
+				}
+			}
+		});
+	}
+
 	private void checkCodeVars(MethodNode mth, List<CodeVar> codeVars) {
 		int unknownTypesCount = 0;
 		for (CodeVar codeVar : codeVars) {
@@ -72,11 +92,10 @@ public class ProcessVariables extends AbstractVisitor {
 				codeVar.setType(ArgType.UNKNOWN);
 				unknownTypesCount++;
 			} else {
-				codeVar.getSsaVars().stream()
-						.filter(ssaVar -> ssaVar.contains(AFlag.IMMUTABLE_TYPE))
+				codeVar.getSsaVars()
 						.forEach(ssaVar -> {
-							ArgType ssaType = ssaVar.getAssign().getInitType();
-							if (ssaType.isTypeKnown()) {
+							ArgType ssaType = ssaVar.getImmutableType();
+							if (ssaType != null && ssaType.isTypeKnown()) {
 								TypeCompare comparator = mth.root().getTypeUpdate().getTypeCompare();
 								TypeCompareEnum result = comparator.compareTypes(ssaType, codeVarType);
 								if (result == TypeCompareEnum.CONFLICT || result.isNarrow()) {

@@ -1,16 +1,19 @@
 package jadx.core.dex.visitors;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.DeclareVariablesAttr;
+import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.instructions.ArithNode;
 import jadx.core.dex.instructions.ArithOp;
 import jadx.core.dex.instructions.InsnType;
@@ -20,6 +23,7 @@ import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.InsnContainer;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
@@ -45,12 +49,19 @@ import jadx.core.utils.exceptions.JadxException;
 public class PrepareForCodeGen extends AbstractVisitor {
 
 	@Override
+	public boolean visit(ClassNode cls) throws JadxException {
+		if (cls.root().getArgs().isDebugInfo()) {
+			setClassSourceLine(cls);
+		}
+		return true;
+	}
+
+	@Override
 	public void visit(MethodNode mth) throws JadxException {
-		List<BlockNode> blocks = mth.getBasicBlocks();
-		if (blocks == null) {
+		if (mth.isNoCode()) {
 			return;
 		}
-		for (BlockNode block : blocks) {
+		for (BlockNode block : mth.getBasicBlocks()) {
 			if (block.contains(AFlag.DONT_GENERATE)) {
 				continue;
 			}
@@ -220,7 +231,7 @@ public class PrepareForCodeGen extends AbstractVisitor {
 					Set<RegisterArg> regArgs = new HashSet<>();
 					constrInsn.getRegisterArgs(regArgs);
 					regArgs.remove(mth.getThisArg());
-					regArgs.removeAll(mth.getArguments(false));
+					regArgs.removeAll(mth.getArgRegs());
 					if (!regArgs.isEmpty()) {
 						mth.addWarn("Illegal instructions before constructor call");
 					} else {
@@ -245,5 +256,24 @@ public class PrepareForCodeGen extends AbstractVisitor {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Use source line from top method
+	 */
+	private void setClassSourceLine(ClassNode cls) {
+		for (ClassNode innerClass : cls.getInnerClasses()) {
+			setClassSourceLine(innerClass);
+		}
+		int minLine = Stream.of(cls.getMethods(), cls.getInnerClasses(), cls.getFields())
+				.flatMap(Collection::stream)
+				.filter(mth -> !mth.contains(AFlag.DONT_GENERATE))
+				.filter(mth -> mth.getSourceLine() != 0)
+				.mapToInt(LineAttrNode::getSourceLine)
+				.min()
+				.orElse(0);
+		if (minLine != 0) {
+			cls.setSourceLine(minLine - 1);
+		}
 	}
 }

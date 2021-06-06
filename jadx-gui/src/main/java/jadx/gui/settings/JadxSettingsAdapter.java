@@ -17,6 +17,7 @@ import com.google.gson.FieldAttributes;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.InstanceCreator;
+import com.google.gson.JsonObject;
 
 import jadx.gui.JadxGUI;
 import jadx.gui.utils.PathTypeAdapter;
@@ -54,8 +55,8 @@ public class JadxSettingsAdapter {
 	}
 
 	public static JadxSettings load() {
+		String jsonSettings = PREFS.get(JADX_GUI_KEY, "");
 		try {
-			String jsonSettings = PREFS.get(JADX_GUI_KEY, "");
 			JadxSettings settings = fromString(jsonSettings);
 			if (settings == null) {
 				LOG.debug("Created new settings.");
@@ -63,12 +64,9 @@ public class JadxSettingsAdapter {
 			} else {
 				settings.fixOnLoad();
 			}
-			if (LOG.isDebugEnabled()) {
-				LOG.debug("Loaded settings: {}", makeString(settings));
-			}
 			return settings;
 		} catch (Exception e) {
-			LOG.error("Error load settings", e);
+			LOG.error("Error load settings. Settings will reset.\n Loaded json string: {}", jsonSettings, e);
 			return new JadxSettings();
 		}
 	}
@@ -76,7 +74,6 @@ public class JadxSettingsAdapter {
 	public static void store(JadxSettings settings) {
 		try {
 			String jsonSettings = makeString(settings);
-			LOG.debug("Saving settings: {}", jsonSettings);
 			PREFS.put(JADX_GUI_KEY, jsonSettings);
 			PREFS.sync();
 		} catch (Exception e) {
@@ -90,6 +87,10 @@ public class JadxSettingsAdapter {
 
 	public static String makeString(JadxSettings settings) {
 		return GSON.toJson(settings);
+	}
+
+	public static JsonObject makeJsonObject(JadxSettings settings) {
+		return GSON.toJsonTree(settings).getAsJsonObject();
 	}
 
 	public static void fill(JadxSettings settings, String jsonStr) {

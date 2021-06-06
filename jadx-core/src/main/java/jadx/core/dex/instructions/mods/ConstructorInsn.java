@@ -1,19 +1,21 @@
 package jadx.core.dex.instructions.mods;
 
+import org.jetbrains.annotations.Nullable;
+
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.MethodInfo;
-import jadx.core.dex.instructions.CallMthInterface;
+import jadx.core.dex.instructions.BaseInvokeNode;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeNode;
+import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 
-public class ConstructorInsn extends InsnNode implements CallMthInterface {
+public final class ConstructorInsn extends BaseInvokeNode {
 
 	private final MethodInfo callMth;
 	private final CallType callType;
-	private final RegisterArg instanceArg;
 
 	public enum CallType {
 		CONSTRUCTOR, // just new instance
@@ -25,47 +27,42 @@ public class ConstructorInsn extends InsnNode implements CallMthInterface {
 	public ConstructorInsn(MethodNode mth, InvokeNode invoke) {
 		super(InsnType.CONSTRUCTOR, invoke.getArgsCount() - 1);
 		this.callMth = invoke.getCallMth();
-		ClassInfo classType = callMth.getDeclClass();
-		instanceArg = (RegisterArg) invoke.getArg(0);
-
-		if (instanceArg.isThis()) {
-			if (classType.equals(mth.getParentClass().getClassInfo())) {
-				if (callMth.getShortId().equals(mth.getMethodInfo().getShortId())) {
-					// self constructor
-					callType = CallType.SELF;
-				} else {
-					callType = CallType.THIS;
-				}
-			} else {
-				callType = CallType.SUPER;
-			}
-		} else {
-			callType = CallType.CONSTRUCTOR;
-			setResult(instanceArg);
-			// convert from 'use' to 'assign'
-			instanceArg.getSVar().setAssign(instanceArg);
-		}
-		instanceArg.getSVar().removeUse(instanceArg);
+		this.callType = getCallType(mth, callMth.getDeclClass(), invoke.getArg(0));
 		int argsCount = invoke.getArgsCount();
 		for (int i = 1; i < argsCount; i++) {
 			addArg(invoke.getArg(i));
 		}
 	}
 
-	public ConstructorInsn(MethodInfo callMth, CallType callType, RegisterArg instanceArg) {
+	private CallType getCallType(MethodNode mth, ClassInfo classType, InsnArg instanceArg) {
+		if (!instanceArg.isThis()) {
+			return CallType.CONSTRUCTOR;
+		}
+		if (!classType.equals(mth.getParentClass().getClassInfo())) {
+			return CallType.SUPER;
+		}
+		if (callMth.getShortId().equals(mth.getMethodInfo().getShortId())) {
+			// self constructor
+			return CallType.SELF;
+		}
+		return CallType.THIS;
+	}
+
+	public ConstructorInsn(MethodInfo callMth, CallType callType) {
 		super(InsnType.CONSTRUCTOR, callMth.getArgsCount());
 		this.callMth = callMth;
 		this.callType = callType;
-		this.instanceArg = instanceArg;
 	}
 
+	@Override
 	public MethodInfo getCallMth() {
 		return callMth;
 	}
 
 	@Override
+	@Nullable
 	public RegisterArg getInstanceArg() {
-		return instanceArg;
+		return null;
 	}
 
 	public ClassInfo getClassType() {
@@ -93,6 +90,16 @@ public class ConstructorInsn extends InsnNode implements CallMthInterface {
 	}
 
 	@Override
+	public boolean isStaticCall() {
+		return false;
+	}
+
+	@Override
+	public int getFirstArgOffset() {
+		return 0;
+	}
+
+	@Override
 	public boolean isSame(InsnNode obj) {
 		if (this == obj) {
 			return true;
@@ -107,11 +114,11 @@ public class ConstructorInsn extends InsnNode implements CallMthInterface {
 
 	@Override
 	public InsnNode copy() {
-		return copyCommonParams(new ConstructorInsn(callMth, callType, instanceArg));
+		return copyCommonParams(new ConstructorInsn(callMth, callType));
 	}
 
 	@Override
 	public String toString() {
-		return super.toString() + ' ' + callMth + ' ' + callType;
+		return super.toString() + " call: " + callMth + " type: " + callType;
 	}
 }

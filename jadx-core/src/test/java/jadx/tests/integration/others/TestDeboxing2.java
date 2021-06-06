@@ -44,6 +44,5 @@ public class TestDeboxing2 extends IntegrationTest {
 		assertThat(code, countString(2, "is(0L)"));
 		assertThat(code, containsOne("test(7L)"));
 		assertThat(code, containsOne("is(7L)"));
-
 	}
 }

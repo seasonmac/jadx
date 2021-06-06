@@ -5,9 +5,10 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+
+import org.jetbrains.annotations.Nullable;
 
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.ParameterDescription;
@@ -78,23 +79,37 @@ public class JCommanderWrapper<T> {
 			}
 			StringBuilder opt = new StringBuilder();
 			opt.append("  ").append(p.getNames());
+			String description = p.getDescription();
 			addSpaces(opt, maxNamesLen - opt.length() + 3);
-			opt.append("- ").append(p.getDescription());
-			addDefaultValue(args, f, opt);
+			if (description.contains("\n")) {
+				String[] lines = description.split("\n");
+				opt.append("- ").append(lines[0]);
+				for (int i = 1; i < lines.length; i++) {
+					opt.append('\n');
+					addSpaces(opt, maxNamesLen + 5);
+					opt.append(lines[i]);
+				}
+			} else {
+				opt.append("- ").append(description);
+			}
+			String defaultValue = getDefaultValue(args, f, opt);
+			if (defaultValue != null) {
+				opt.append(", default: ").append(defaultValue);
+			}
 			out.println(opt);
 		}
-		out.println("Example:");
+		out.println("Examples:");
 		out.println("  jadx -d out classes.dex");
+		out.println("  jadx --rename-flags \"none\" classes.dex");
+		out.println("  jadx --rename-flags \"valid, printable\" classes.dex");
+		out.println("  jadx --log-level ERROR app.apk");
 	}
 
 	/**
 	 * Get all declared fields of the specified class and all super classes
-	 *
-	 * @param clazz
-	 * @return
 	 */
 	private List<Field> getFields(Class<?> clazz) {
-		List<Field> fieldList = new LinkedList<>();
+		List<Field> fieldList = new ArrayList<>();
 		while (clazz != null) {
 			fieldList.addAll(Arrays.asList(clazz.getDeclaredFields()));
 			clazz = clazz.getSuperclass();
@@ -102,26 +117,26 @@ public class JCommanderWrapper<T> {
 		return fieldList;
 	}
 
-	private void addDefaultValue(JadxCLIArgs args, Field f, StringBuilder opt) {
-		Class<?> fieldType = f.getType();
-		if (fieldType == int.class) {
-			try {
-				int val = f.getInt(args);
-				opt.append(" (default: ").append(val).append(')');
-			} catch (Exception e) {
-				// ignore
+	@Nullable
+	private String getDefaultValue(JadxCLIArgs args, Field f, StringBuilder opt) {
+		try {
+			Class<?> fieldType = f.getType();
+			if (fieldType == int.class) {
+				return Integer.toString(f.getInt(args));
 			}
-		}
-		if (fieldType == String.class) {
-			try {
-				String val = (String) f.get(args);
+			if (fieldType == String.class) {
+				return (String) f.get(args);
+			}
+			if (Enum.class.isAssignableFrom(fieldType)) {
+				Enum<?> val = (Enum<?>) f.get(args);
 				if (val != null) {
-					opt.append(" (default: ").append(val).append(')');
+					return val.name();
 				}
-			} catch (Exception e) {
-				// ignore
 			}
+		} catch (Exception e) {
+			// ignore
 		}
+		return null;
 	}
 
 	private static void addSpaces(StringBuilder str, int count) {

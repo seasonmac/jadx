@@ -54,7 +54,7 @@ public class DeboxingVisitor extends AbstractVisitor {
 	private static MethodInfo valueOfMth(RootNode root, ArgType argType, String clsName) {
 		ArgType boxType = ArgType.object(clsName);
 		ClassInfo boxCls = ClassInfo.fromType(root, boxType);
-		return MethodInfo.externalMth(boxCls, "valueOf", Collections.singletonList(argType), boxType);
+		return MethodInfo.fromDetails(root, boxCls, "valueOf", Collections.singletonList(argType), boxType);
 	}
 
 	@Override
@@ -71,7 +71,7 @@ public class DeboxingVisitor extends AbstractVisitor {
 				if (insnNode.getType() == InsnType.INVOKE) {
 					InsnNode replaceInsn = checkForReplace(((InvokeNode) insnNode));
 					if (replaceInsn != null) {
-						BlockUtils.replaceInsn(blockNode, i, replaceInsn);
+						BlockUtils.replaceInsn(mth, blockNode, i, replaceInsn);
 						replaced = true;
 					}
 				}
@@ -134,8 +134,7 @@ public class DeboxingVisitor extends AbstractVisitor {
 
 	private boolean canChangeTypeToPrimitive(RegisterArg arg) {
 		for (SSAVar ssaVar : arg.getSVar().getCodeVar().getSsaVars()) {
-			RegisterArg assignArg = ssaVar.getAssign();
-			if (assignArg.contains(AFlag.IMMUTABLE_TYPE)) {
+			if (ssaVar.isTypeImmutable()) {
 				return false;
 			}
 			for (RegisterArg useArg : ssaVar.getUseList()) {

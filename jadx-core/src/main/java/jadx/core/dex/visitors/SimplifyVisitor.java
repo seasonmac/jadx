@@ -4,10 +4,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.Consts;
+import jadx.core.codegen.TypeGen;
 import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.ClassInfo;
@@ -39,11 +41,24 @@ import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnList;
 import jadx.core.utils.InsnRemover;
+import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class SimplifyVisitor extends AbstractVisitor {
 
 	private static final Logger LOG = LoggerFactory.getLogger(SimplifyVisitor.class);
+
+	private MethodInfo stringGetBytesMth;
+
+	@Override
+	public void init(RootNode root) {
+		stringGetBytesMth = MethodInfo.fromDetails(
+				root,
+				ClassInfo.fromType(root, ArgType.STRING),
+				"getBytes",
+				Collections.emptyList(),
+				ArgType.array(ArgType.BYTE));
+	}
 
 	@Override
 	public void visit(MethodNode mth) {
@@ -61,14 +76,15 @@ public class SimplifyVisitor extends AbstractVisitor {
 		}
 	}
 
-	private static boolean simplifyBlock(MethodNode mth, BlockNode block) {
+	private boolean simplifyBlock(MethodNode mth, BlockNode block) {
 		boolean changed = false;
 		List<InsnNode> list = block.getInstructions();
 		for (int i = 0; i < list.size(); i++) {
 			InsnNode insn = list.get(i);
 			int insnCount = list.size();
-			InsnNode modInsn = simplifyInsn(mth, block, insn);
+			InsnNode modInsn = simplifyInsn(mth, insn);
 			if (modInsn != null) {
+				modInsn.rebindArgs();
 				if (i < list.size() && list.get(i) == insn) {
 					list.set(i, modInsn);
 				} else {
@@ -89,18 +105,29 @@ public class SimplifyVisitor extends AbstractVisitor {
 		return changed;
 	}
 
-	private static InsnNode simplifyInsn(MethodNode mth, BlockNode block, InsnNode insn) {
-		if (insn.contains(AFlag.DONT_GENERATE)) {
-			return null;
-		}
+	private void simplifyArgs(MethodNode mth, InsnNode insn) {
+		boolean changed = false;
 		for (InsnArg arg : insn.getArguments()) {
 			if (arg.isInsnWrap()) {
-				InsnNode ni = simplifyInsn(mth, block, ((InsnWrapArg) arg).getWrapInsn());
-				if (ni != null) {
-					arg.wrapInstruction(mth, ni);
+				InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
+				InsnNode replaceInsn = simplifyInsn(mth, wrapInsn);
+				if (replaceInsn != null) {
+					arg.wrapInstruction(mth, replaceInsn);
+					InsnRemover.unbindInsn(mth, wrapInsn);
+					changed = true;
 				}
 			}
 		}
+		if (changed) {
+			insn.rebindArgs();
+		}
+	}
+
+	private InsnNode simplifyInsn(MethodNode mth, InsnNode insn) {
+		if (insn.contains(AFlag.DONT_GENERATE)) {
+			return null;
+		}
+		simplifyArgs(mth, insn);
 		switch (insn.getType()) {
 			case ARITH:
 				return simplifyArith((ArithNode) insn);
@@ -120,7 +147,7 @@ public class SimplifyVisitor extends AbstractVisitor {
 				return convertFieldArith(mth, insn);
 
 			case CHECK_CAST:
-				return processCast(mth, insn);
+				return processCast(mth, (IndexInsnNode) insn);
 
 			case MOVE:
 				InsnArg firstArg = insn.getArg(0);
@@ -134,8 +161,7 @@ public class SimplifyVisitor extends AbstractVisitor {
 				break;
 
 			case CONSTRUCTOR:
-				simplifyStringConstructor(mth.root(), (ConstructorInsn) insn);
-				break;
+				return simplifyStringConstructor(mth, (ConstructorInsn) insn);
 
 			default:
 				break;
@@ -143,7 +169,7 @@ public class SimplifyVisitor extends AbstractVisitor {
 		return null;
 	}
 
-	private static void simplifyStringConstructor(RootNode root, ConstructorInsn insn) {
+	private InsnNode simplifyStringConstructor(MethodNode mth, ConstructorInsn insn) {
 		if (insn.getCallMth().getDeclClass().getType().equals(ArgType.STRING)
 				&& insn.getArgsCount() != 0
 				&& insn.getArg(0).isInsnWrap()) {
@@ -157,7 +183,7 @@ public class SimplifyVisitor extends AbstractVisitor {
 					for (int i = 0; i < arr.length; i++) {
 						InsnArg arrArg = arrInsn.getArg(i);
 						if (!arrArg.isLiteral()) {
-							return;
+							return null;
 						}
 						arr[i] = (byte) ((LiteralArg) arrArg).getLiteral();
 						if (NameMapper.isPrintableChar(arr[i])) {
@@ -165,27 +191,32 @@ public class SimplifyVisitor extends AbstractVisitor {
 						}
 					}
 					if (printable >= arr.length - printable) {
-						InsnArg wa = InsnArg.wrapArg(new ConstStringNode(new String(arr)));
+						InsnNode constStr = new ConstStringNode(new String(arr));
 						if (insn.getArgsCount() == 1) {
-							insn.setArg(0, wa);
+							constStr.setResult(insn.getResult());
+							constStr.copyAttributesFrom(insn);
+							InsnRemover.unbindArgUsage(mth, insn.getArg(0));
+							return constStr;
 						} else {
-							MethodInfo mi = MethodInfo.externalMth(
-									ClassInfo.fromType(root, ArgType.STRING),
-									"getBytes",
-									Collections.emptyList(),
-									ArgType.array(ArgType.BYTE));
-							InvokeNode in = new InvokeNode(mi, InvokeType.VIRTUAL, 1);
-							in.addArg(wa);
-							insn.setArg(0, InsnArg.wrapArg(in));
+							InvokeNode in = new InvokeNode(stringGetBytesMth, InvokeType.VIRTUAL, 1);
+							in.addArg(InsnArg.wrapArg(constStr));
+							InsnArg bytesArg = InsnArg.wrapArg(in);
+							bytesArg.setType(stringGetBytesMth.getReturnType());
+							insn.setArg(0, bytesArg);
+							return null;
 						}
 					}
 				}
 			}
 		}
+		return null;
 	}
 
-	private static InsnNode processCast(MethodNode mth, InsnNode insn) {
-		InsnArg castArg = insn.getArg(0);
+	private static InsnNode processCast(MethodNode mth, IndexInsnNode castInsn) {
+		if (castInsn.contains(AFlag.EXPLICIT_CAST)) {
+			return null;
+		}
+		InsnArg castArg = castInsn.getArg(0);
 		ArgType argType = castArg.getType();
 
 		// Don't removes CHECK_CAST for wrapped INVOKE if invoked method returns different type
@@ -195,15 +226,32 @@ public class SimplifyVisitor extends AbstractVisitor {
 				argType = ((InvokeNode) wrapInsn).getCallMth().getReturnType();
 			}
 		}
-		ArgType castToType = (ArgType) ((IndexInsnNode) insn).getIndex();
-		if (ArgType.isCastNeeded(mth.dex(), argType, castToType)) {
-			return null;
+
+		ArgType castToType = (ArgType) castInsn.getIndex();
+		if (!ArgType.isCastNeeded(mth.root(), argType, castToType)
+				|| isCastDuplicate(castInsn)) {
+			InsnNode insnNode = new InsnNode(InsnType.MOVE, 1);
+			insnNode.setOffset(castInsn.getOffset());
+			insnNode.setResult(castInsn.getResult());
+			insnNode.addArg(castArg);
+			return insnNode;
 		}
-		InsnNode insnNode = new InsnNode(InsnType.MOVE, 1);
-		insnNode.setOffset(insn.getOffset());
-		insnNode.setResult(insn.getResult());
-		insnNode.addArg(castArg);
-		return insnNode;
+		return null;
+	}
+
+	private static boolean isCastDuplicate(IndexInsnNode castInsn) {
+		InsnArg arg = castInsn.getArg(0);
+		if (arg.isRegister()) {
+			SSAVar sVar = ((RegisterArg) arg).getSVar();
+			if (sVar != null && sVar.getUseCount() == 1 && !sVar.isUsedInPhi()) {
+				InsnNode assignInsn = sVar.getAssign().getParentInsn();
+				if (assignInsn != null && assignInsn.getType() == InsnType.CHECK_CAST) {
+					ArgType assignCastType = (ArgType) ((IndexInsnNode) assignInsn).getIndex();
+					return assignCastType.equals(castInsn.getIndex());
+				}
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -214,8 +262,7 @@ public class SimplifyVisitor extends AbstractVisitor {
 		if (f.isInsnWrap()) {
 			InsnNode wi = ((InsnWrapArg) f).getWrapInsn();
 			if (wi.getType() == InsnType.CMP_L || wi.getType() == InsnType.CMP_G) {
-				if (insn.getArg(1).isLiteral()
-						&& ((LiteralArg) insn.getArg(1)).getLiteral() == 0) {
+				if (insn.getArg(1).isZeroLiteral()) {
 					insn.changeCondition(insn.getOp(), wi.getArg(0), wi.getArg(1));
 				} else {
 					LOG.warn("TODO: cmp {}", insn);
@@ -332,16 +379,108 @@ public class SimplifyVisitor extends AbstractVisitor {
 				}
 				args.add(arg);
 			}
+
+			boolean stringArgFound = false;
+			for (InsnArg arg : args) {
+				if (arg.getType().equals(ArgType.STRING)) {
+					stringArgFound = true;
+					break;
+				}
+			}
+			if (!stringArgFound) {
+				mth.addDebugComment("TODO: convert one arg to string using `String.valueOf()`, args: " + args);
+				return null;
+			}
+
+			// all check passed
 			removeStringBuilderInsns(mth, toStrInsn, chain);
 
-			InsnNode concatInsn = new InsnNode(InsnType.STR_CONCAT, args);
+			List<InsnArg> dupArgs = Utils.collectionMap(args, InsnArg::duplicate);
+			List<InsnArg> simplifiedArgs = concatConstArgs(dupArgs);
+			InsnNode concatInsn = new InsnNode(InsnType.STR_CONCAT, simplifiedArgs);
 			concatInsn.setResult(toStrInsn.getResult());
+			concatInsn.add(AFlag.SYNTHETIC);
 			concatInsn.copyAttributesFrom(toStrInsn);
+			concatInsn.remove(AFlag.DONT_GENERATE);
+			concatInsn.remove(AFlag.REMOVE);
+			checkResult(mth, concatInsn);
 			return concatInsn;
 		} catch (Exception e) {
 			LOG.warn("Can't convert string concatenation: {} insn: {}", mth, toStrInsn, e);
 		}
 		return null;
+	}
+
+	private static boolean isConstConcatNeeded(List<InsnArg> args) {
+		boolean prevConst = false;
+		for (InsnArg arg : args) {
+			boolean curConst = arg.isConst();
+			if (curConst && prevConst) {
+				// found 2 consecutive constants
+				return true;
+			}
+			prevConst = curConst;
+		}
+		return false;
+	}
+
+	private static List<InsnArg> concatConstArgs(List<InsnArg> args) {
+		if (!isConstConcatNeeded(args)) {
+			return args;
+		}
+		int size = args.size();
+		List<InsnArg> newArgs = new ArrayList<>(size);
+		List<String> concatList = new ArrayList<>(size);
+		for (int i = 0; i < size; i++) {
+			InsnArg arg = args.get(i);
+			String constStr = getConstString(arg);
+			if (constStr != null) {
+				concatList.add(constStr);
+			} else {
+				if (!concatList.isEmpty()) {
+					newArgs.add(getConcatArg(concatList, args, i));
+					concatList.clear();
+				}
+				newArgs.add(arg);
+			}
+		}
+		if (!concatList.isEmpty()) {
+			newArgs.add(getConcatArg(concatList, args, size));
+		}
+		return newArgs;
+	}
+
+	private static InsnArg getConcatArg(List<String> concatList, List<InsnArg> args, int idx) {
+		if (concatList.size() == 1) {
+			return args.get(idx - 1);
+		}
+		String str = Utils.concatStrings(concatList);
+		return InsnArg.wrapArg(new ConstStringNode(str));
+	}
+
+	@Nullable
+	private static String getConstString(InsnArg arg) {
+		if (arg.isLiteral()) {
+			return TypeGen.literalToRawString((LiteralArg) arg);
+		}
+		if (arg.isInsnWrap()) {
+			InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
+			if (wrapInsn instanceof ConstStringNode) {
+				return ((ConstStringNode) wrapInsn).getString();
+			}
+		}
+		return null;
+	}
+
+	/* String concat without assign to variable will cause compilation error */
+	private static void checkResult(MethodNode mth, InsnNode concatInsn) {
+		if (concatInsn.getResult() == null) {
+			RegisterArg resArg = InsnArg.reg(0, ArgType.STRING);
+			SSAVar ssaVar = mth.makeNewSVar(resArg);
+			InitCodeVariables.initCodeVar(ssaVar);
+			ssaVar.setType(ArgType.STRING);
+			concatInsn.setResult(resArg);
+		}
 	}
 
 	/**
@@ -437,7 +576,8 @@ public class SimplifyVisitor extends AbstractVisitor {
 				|| !wrap.getArg(0).isInsnWrap()) {
 			return null;
 		}
-		InsnNode get = ((InsnWrapArg) wrap.getArg(0)).getWrapInsn();
+		InsnArg getWrap = wrap.getArg(0);
+		InsnNode get = ((InsnWrapArg) getWrap).getWrapInsn();
 		InsnType getType = get.getType();
 		if (getType != InsnType.IGET && getType != InsnType.SGET) {
 			return null;
@@ -455,7 +595,8 @@ public class SimplifyVisitor extends AbstractVisitor {
 					return null;
 				}
 			}
-			InsnArg fArg = InsnArg.wrapArg(get);
+			InsnArg fArg = getWrap.duplicate();
+			InsnRemover.unbindInsn(mth, get);
 			if (insn.getType() == InsnType.IPUT) {
 				InsnRemover.unbindArgUsage(mth, insn.getArg(1));
 			}
